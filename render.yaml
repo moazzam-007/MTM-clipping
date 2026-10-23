@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: al-haqq-shorts-engine
+    env: docker
+    region: frankfurt
+    plan: free
+    dockerfilePath: Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_PRIMARY_MODEL
+        value: gemini-2.5-flash-lite
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_API_KEY_FALLBACK
+        sync: false
+      - key: API_SECRET_KEY
+        generateValue: true
+      - key: PORT
+        value: 10000
