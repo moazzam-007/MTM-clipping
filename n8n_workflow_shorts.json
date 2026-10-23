@@ -1,0 +1,248 @@
+{
+  "name": "Al Haqq YouTube Shorts & Mini-Long Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * *"
+            }
+          ]
+        }
+      },
+      "name": "Daily Schedule (9 AM)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        300
+      ],
+      "id": "node-schedule-01"
+    },
+    {
+      "parameters": {
+        "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UC7hM1hU3m6E78H-UuGgR6ug",
+        "options": {}
+      },
+      "name": "Check MTM Channel RSS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        460,
+        300
+      ],
+      "id": "node-fetch-rss-02"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://your-render-service.onrender.com/api/process-video",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "value": "your_api_secret_key"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "url",
+              "value": "={{ $json.link }}"
+            },
+            {
+              "name": "max_clips",
+              "value": 5
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Trigger Render Video Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        300
+      ],
+      "id": "node-trigger-job-03"
+    },
+    {
+      "parameters": {
+        "amount": 2,
+        "unit": "minutes"
+      },
+      "name": "Wait for Processing",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        900,
+        300
+      ],
+      "id": "node-wait-04"
+    },
+    {
+      "parameters": {
+        "url": "=https://your-render-service.onrender.com/api/status/{{ $('Trigger Render Video Job').item.json.job_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "your_api_secret_key"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Poll Job Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        300
+      ],
+      "id": "node-poll-status-05"
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "clips",
+        "options": {}
+      },
+      "name": "Split Clips Array",
+      "type": "n8n-nodes-base.itemLists",
+      "typeVersion": 3,
+      "position": [
+        1340,
+        300
+      ],
+      "id": "node-split-clips-06"
+    },
+    {
+      "parameters": {
+        "url": "=https://your-render-service.onrender.com{{ $json.download_url }}",
+        "responseFormat": "file",
+        "options": {}
+      },
+      "name": "Download Rendered MP4",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1560,
+        300
+      ],
+      "id": "node-download-mp4-07"
+    },
+    {
+      "parameters": {
+        "resource": "video",
+        "operation": "upload",
+        "title": "={{ $('Split Clips Array').item.json.yt_title }}",
+        "description": "={{ $('Split Clips Array').item.json.yt_description }}",
+        "tags": "={{ $('Split Clips Array').item.json.tags.join(',') }}",
+        "privacyStatus": "public",
+        "binaryPropertyName": "data"
+      },
+      "name": "Upload to YouTube Channel",
+      "type": "n8n-nodes-base.youTube",
+      "typeVersion": 1,
+      "position": [
+        1780,
+        300
+      ],
+      "id": "node-upload-yt-08"
+    }
+  ],
+  "connections": {
+    "Daily Schedule (9 AM)": {
+      "main": [
+        [
+          {
+            "node": "Check MTM Channel RSS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check MTM Channel RSS": {
+      "main": [
+        [
+          {
+            "node": "Trigger Render Video Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger Render Video Job": {
+      "main": [
+        [
+          {
+            "node": "Wait for Processing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for Processing": {
+      "main": [
+        [
+          {
+            "node": "Poll Job Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Poll Job Status": {
+      "main": [
+        [
+          {
+            "node": "Split Clips Array",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Clips Array": {
+      "main": [
+        [
+          {
+            "node": "Download Rendered MP4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Rendered MP4": {
+      "main": [
+        [
+          {
+            "node": "Upload to YouTube Channel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

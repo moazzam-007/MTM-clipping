@@ -1,0 +1,52 @@
+# Environments
+.env
+.env.local
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Media & Temporary Renders
+jobs/
+*.mp4
+*.mp3
+*.m4a
+*.part
+mtm_clip_frame.jpg
+final_short_frame.jpg
+test_layout_preview.jpg
+rendered_template_bg.png
+transcript_cache.json
+lecture_sample_audio.mp3
+test_clip_audio.mp3
+test_audio.*
+
+# IDE & OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
