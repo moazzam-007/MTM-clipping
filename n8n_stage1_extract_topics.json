@@ -1,0 +1,422 @@
+{
+  "name": "Al Haqq - Stage 1: Topic Extraction & Sheet Population",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * *"
+            }
+          ]
+        }
+      },
+      "id": "node-schedule-daily",
+      "name": "⏰ Daily Schedule (8:00 AM)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -3000,
+        500
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "node-manual-trigger",
+      "name": "▶️ Manual Test Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -3000,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UC7hM1hU3m6E78H-UuGgR6ug",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "node-fetch-yt-rss",
+      "name": "📡 Fetch MTM Latest RSS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2760,
+        600
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse YouTube Atom Feed and decode XML entities\nconst xmlText = String($input.first().json.data || $input.first().json.body || '');\n\nif (!xmlText || !xmlText.includes('<entry>')) {\n  throw new Error(\"YouTube RSS Feed did not return any <entry> video elements!\");\n}\n\nconst entryMatch = xmlText.match(/<entry>[\\s\\S]*?<\\/entry>/);\nif (!entryMatch) {\n  throw new Error(\"Failed to extract latest video entry from YouTube RSS!\");\n}\n\nconst entry = entryMatch[0];\nconst idMatch = entry.match(/<yt:videoId>(.*?)<\\/yt:videoId>/);\nconst titleMatch = entry.match(/<title>(.*?)<\\/title>/);\nconst linkMatch = entry.match(/<link rel=\"alternate\" href=\"(.*?)\"\\/>/);\nconst publishedMatch = entry.match(/<published>(.*?)<\\/published>/);\n\nconst videoId = idMatch ? idMatch[1].trim() : '';\nif (!videoId) {\n  throw new Error(\"Extracted Video ID is empty!\");\n}\n\n// Clean XML entities in title\nlet title = titleMatch ? titleMatch[1].trim() : 'Mufti Tariq Masood Bayan';\ntitle = title\n  .replace(/&amp;/g, '&')\n  .replace(/&lt;/g, '<')\n  .replace(/&gt;/g, '>')\n  .replace(/&quot;/g, '\"')\n  .replace(/&#39;/g, \"'\");\n\nconst url = linkMatch ? linkMatch[1].trim() : `https://youtu.be/${videoId}`;\nconst published = publishedMatch ? publishedMatch[1].trim() : new Date().toISOString();\n\nreturn [{\n  json: {\n    video_id: videoId,\n    title: title,\n    url: url,\n    published: published\n  }\n}];"
+      },
+      "id": "node-parse-rss",
+      "name": "📝 Parse Latest Video Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2520,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID_HERE",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Clips_Queue",
+          "mode": "name"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "Video_ID",
+              "lookupValue": "={{ $json.video_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-check-sheet-dedup",
+      "name": "📊 Check If Already Processed",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -2280,
+        600
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cond-already-exists",
+              "leftValue": "={{ $input.all().filter(r => r.json && r.json.Video_ID).length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "node-is-new-video",
+      "name": "❓ Is Video Fresh & Unprocessed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -2040,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://your-render-service.onrender.com/health",
+        "options": {
+          "timeout": 45000
+        }
+      },
+      "id": "node-wake-render",
+      "name": "🔔 Wake Render Engine (GET /health)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1760,
+        500
+      ],
+      "retryOnFail": true,
+      "maxTries": 6,
+      "waitBetweenTries": 10000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://your-render-service.onrender.com/api/extract-topics",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.AL_HAQQ_API_SECRET_KEY || 'your_secret_key' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"url\": {{ JSON.stringify($('📝 Parse Latest Video Data').first().json.url) }},\n  \"max_clips\": 5,\n  \"audio_sample_duration\": 1200\n}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "node-call-extract-api",
+      "name": "🧠 Call AI Topic Extraction API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1500,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "topics",
+        "options": {}
+      },
+      "id": "node-split-topics",
+      "name": "🔀 Split Topics Array",
+      "type": "n8n-nodes-base.itemLists",
+      "typeVersion": 3,
+      "position": [
+        -1260,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate extracted clip boundaries and metadata\nconst validItems = [];\n\nfor (const item of $input.all()) {\n  const t = item.json || {};\n  const start = Number(t.start_time);\n  const end = Number(t.end_time);\n  const hook = String(t.roman_urdu_hook || '').trim();\n  const title = String(t.yt_title || '').trim();\n  \n  // Check finite numbers, start < end, duration between 35s and 360s\n  if (Number.isFinite(start) && Number.isFinite(end) && end > start) {\n    const dur = end - start;\n    if (dur >= 35 && dur <= 360 && hook.length > 5 && title.length > 5) {\n      validItems.push({\n        json: {\n          ...t,\n          start_time: start,\n          end_time: end,\n          duration_sec: parseFloat(dur.toFixed(1)),\n          roman_urdu_hook: hook,\n          yt_title: title\n        }\n      });\n    }\n  }\n}\n\nif (validItems.length === 0) {\n  throw new Error(\"No valid topics passed validation criteria!\");\n}\n\nreturn validItems;"
+      },
+      "id": "node-validate-topics",
+      "name": "🛡️ Validate Clip Boundaries & Metadata",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1020,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID_HERE",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Clips_Queue",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Date": "={{ $now.toFormat('yyyy-MM-dd') }}",
+            "Video_ID": "={{ $('📝 Parse Latest Video Data').first().json.video_id }}",
+            "Video_URL": "={{ $('📝 Parse Latest Video Data').first().json.url }}",
+            "Lecture_Title": "={{ $('📝 Parse Latest Video Data').first().json.title }}",
+            "Category": "={{ $json.category || 'shorts' }}",
+            "Start_Sec": "={{ $json.start_time }}",
+            "End_Sec": "={{ $json.end_time }}",
+            "Duration_Sec": "={{ $json.duration_sec }}",
+            "Roman_Urdu_Hook": "={{ $json.roman_urdu_hook }}",
+            "Arabic_Sub": "={{ $json.arabic_sub || '' }}",
+            "English_Sub": "={{ $json.english_sub || '' }}",
+            "YT_Title": "={{ $json.yt_title }}",
+            "YT_Description": "={{ $json.yt_description }}",
+            "Tags": "={{ Array.isArray($json.tags) ? $json.tags.join(',') : ($json.tags || '') }}",
+            "Status": "pending"
+          }
+        },
+        "options": {}
+      },
+      "id": "node-append-to-sheet",
+      "name": "📥 Append Topics to Google Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -780,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "1306188611",
+        "text": "=✅ <b>Al Haqq: Stage 1 Topics Extracted!</b>\n\n📺 <b>Bayan:</b> {{ $('📝 Parse Latest Video Data').first().json.title }}\n🎯 <b>Clips Ready in Sheet:</b> {{ $input.all().length }} clips\n📌 <b>Status:</b> All set to 'pending' in Google Sheet.\n⏰ {{ $now.setZone(\"Asia/Kolkata\").toFormat(\"HH:mm\") }} IST",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "node-telegram-success",
+      "name": "📨 Telegram - Stage 1 Success Alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -540,
+        500
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {},
+      "id": "node-already-processed-noop",
+      "name": "🛑 Already Processed (Skip)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        -1760,
+        700
+      ]
+    }
+  ],
+  "connections": {
+    "⏰ Daily Schedule (8:00 AM)": {
+      "main": [
+        [
+          {
+            "node": "📡 Fetch MTM Latest RSS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "▶️ Manual Test Trigger": {
+      "main": [
+        [
+          {
+            "node": "📡 Fetch MTM Latest RSS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📡 Fetch MTM Latest RSS": {
+      "main": [
+        [
+          {
+            "node": "📝 Parse Latest Video Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📝 Parse Latest Video Data": {
+      "main": [
+        [
+          {
+            "node": "📊 Check If Already Processed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📊 Check If Already Processed": {
+      "main": [
+        [
+          {
+            "node": "❓ Is Video Fresh & Unprocessed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "❓ Is Video Fresh & Unprocessed?": {
+      "main": [
+        [
+          {
+            "node": "🔔 Wake Render Engine (GET /health)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🛑 Already Processed (Skip)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔔 Wake Render Engine (GET /health)": {
+      "main": [
+        [
+          {
+            "node": "🧠 Call AI Topic Extraction API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🧠 Call AI Topic Extraction API": {
+      "main": [
+        [
+          {
+            "node": "🔀 Split Topics Array",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔀 Split Topics Array": {
+      "main": [
+        [
+          {
+            "node": "🛡️ Validate Clip Boundaries & Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🛡️ Validate Clip Boundaries & Metadata": {
+      "main": [
+        [
+          {
+            "node": "📥 Append Topics to Google Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📥 Append Topics to Google Sheet": {
+      "main": [
+        [
+          {
+            "node": "📨 Telegram - Stage 1 Success Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Kolkata"
+  }
+}
