@@ -1,0 +1,678 @@
+{
+  "name": "Al Haqq - Stage 2: Render & YouTube Publishing",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 7 * * *"
+            }
+          ]
+        }
+      },
+      "id": "node-schedule-morning-7am",
+      "name": "⏰ Morning Batch Trigger (7:00 AM IST)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -3200,
+        400
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "node-manual-stage2",
+      "name": "▶️ Manual Test Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -3200,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.RENDER_SERVICE_URL.replace(/\\/+$/, '') }}/health",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "node-wake-ping-1",
+      "name": "🔔 1. Ping Render Engine (GET /health)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2960,
+        500
+      ],
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 10000
+    },
+    {
+      "parameters": {
+        "amount": 50,
+        "unit": "seconds"
+      },
+      "id": "node-wait-cold-start",
+      "name": "⏳ 2. Wait 50s (Cold Start)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -2720,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.RENDER_SERVICE_URL.replace(/\\/+$/, '') }}/health",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "node-wake-check-health",
+      "name": "🔍 3. Check Render Health",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2480,
+        500
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cond-is-awake",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "ok",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "node-if-render-awake",
+      "name": "❓ 4. Is Render Awake?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -2240,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 30,
+        "unit": "seconds"
+      },
+      "id": "node-wait-retry-30s",
+      "name": "⏳ Wait 30s Retry",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -2240,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $env.GOOGLE_SHEET_ID || 'YOUR_GOOGLE_SHEET_ID_HERE' }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Clips_Queue",
+          "mode": "name"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "Status",
+              "lookupValue": "pending"
+            }
+          ]
+        },
+        "options": {
+          "limit": 5
+        }
+      },
+      "id": "node-get-pending-clips",
+      "name": "📊 5. Get Up To 5 Pending Clips",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -1960,
+        500
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cond-has-pending",
+              "leftValue": "={{ $input.all().filter(r => r.json && r.json.Status === 'pending').length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "node-has-pending-clips",
+      "name": "❓ Any Pending Clips?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -1720,
+        500
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "node-no-pending-noop",
+      "name": "🛑 No Pending Clips (Done)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        -1720,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare batch payloads and calculate spaced-out YouTube publish schedules\nconst pendingItems = $input.all().filter(r => r.json && r.json.Status === 'pending');\nif (pendingItems.length === 0) {\n  throw new Error('No pending clip rows available.');\n}\n\n// 5 Spaced Publishing Time Slots (IST): 10:00 AM, 1:00 PM, 4:30 PM, 7:30 PM, 10:00 PM\nconst scheduleHours = [10, 13, 16.5, 19.5, 22];\nconst nowEpoch = Date.now();\nconst istOffsetMs = 5.5 * 60 * 60 * 1000;\nconst nowIST = new Date(nowEpoch + istOffsetMs);\n\nconst year = nowIST.getUTCFullYear();\nconst month = nowIST.getUTCMonth();\nconst day = nowIST.getUTCDate();\n\nconst outputItems = [];\n\nfor (let i = 0; i < pendingItems.length; i++) {\n  const row = pendingItems[i].json;\n  const startTime = parseFloat(row.Start_Sec) || 0;\n  const endTime = parseFloat(row.End_Sec) || 0;\n  const category = String(row.Category || 'shorts').toLowerCase().trim();\n\n  let rawTitle = String(row.YT_Title || row.Roman_Urdu_Hook || 'Islamic Reminder').replace(/[<>]/g, '').trim();\n  if (category === 'shorts') {\n    if (!rawTitle.toLowerCase().includes('#shorts')) {\n      rawTitle = `${rawTitle} #Shorts`.substring(0, 100).trim();\n    }\n  } else {\n    rawTitle = rawTitle.replace(/#shorts\\b/gi, '').trim();\n  }\n\n  let desc = String(row.YT_Description || '').replace(/[<>]/g, '').trim();\n  if (!desc) {\n    desc = `${rawTitle}\\n\\nMufti Tariq Masood Bayan Short Reminder.\\nSubscribe @al__haqqq for authentic daily Islamic guidance.\\n\\n#MuftiTariqMasood #IslamicReminder #UrduBayan #AlHaqq`;\n  }\n\n  let rawTags = String(row.Tags || '#MuftiTariqMasood,#IslamicReminder,#Bayan,#AlHaqq');\n  let cleanTags = rawTags\n    .split(',')\n    .map(t => t.replace(/[<>\"#]/g, '').trim())\n    .filter(t => t.length > 0);\n  if (category === 'shorts' && !cleanTags.includes('Shorts')) {\n    cleanTags.unshift('Shorts');\n  } else if (category !== 'shorts') {\n    cleanTags = cleanTags.filter(t => t.toLowerCase() !== 'shorts');\n  }\n\n  // Calculate UTC timestamp from IST slot\n  const slotHourDecimal = scheduleHours[Math.min(i, scheduleHours.length - 1)];\n  const hour = Math.floor(slotHourDecimal);\n  const minute = Math.round((slotHourDecimal - hour) * 60);\n\n  let slotUtcMs = Date.UTC(year, month, day, hour, minute, 0) - istOffsetMs;\n  // Enforce scheduled time is at least 30 minutes in the future\n  const minFutureMs = nowEpoch + (30 * 60 * 1000) + (i * 45 * 60 * 1000);\n  if (slotUtcMs < minFutureMs) {\n    slotUtcMs = minFutureMs;\n  }\n  const scheduledTimeIso = new Date(slotUtcMs).toISOString();\n\n  outputItems.push({\n    json: {\n      clip_id: String(row.Clip_ID || (row.Video_ID ? `${row.Video_ID}_${Math.round(startTime)}` : `clip_${Date.now()}`)),\n      url: String(row.Video_URL || '').trim(),\n      video_id: String(row.Video_ID || '').trim(),\n      start_time: startTime,\n      end_time: endTime,\n      duration: Math.round((endTime - startTime) * 10) / 10,\n      hook_text: String(row.Roman_Urdu_Hook || '').trim(),\n      arabic_sub: String(row.Arabic_Sub || '').trim(),\n      english_sub: String(row.English_Sub || '').trim(),\n      category: category,\n      yt_title: rawTitle,\n      yt_description: desc,\n      tags: cleanTags.join(','),\n      scheduled_publish_time: scheduledTimeIso\n    }\n  });\n}\n\nreturn outputItems;"
+      },
+      "id": "node-prepare-batch-payloads",
+      "name": "📝 6. Prepare Batch Payloads & Schedules",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1480,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.RENDER_SERVICE_URL.replace(/\\/+$/, '') }}/api/render-clip-async",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.AL_HAQQ_API_SECRET_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"url\": {{ JSON.stringify($json.url) }},\n  \"start_time\": {{ $json.start_time }},\n  \"end_time\": {{ $json.end_time }},\n  \"hook_text\": {{ JSON.stringify($json.hook_text) }},\n  \"arabic_sub\": {{ JSON.stringify($json.arabic_sub) }},\n  \"english_sub\": {{ JSON.stringify($json.english_sub) }},\n  \"category\": {{ JSON.stringify($json.category) }}\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "node-call-render-async",
+      "name": "🎬 7. Call Render Async (/api/render-clip-async)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1240,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 50,
+        "unit": "seconds"
+      },
+      "id": "node-wait-50s-poll",
+      "name": "⏳ 8. Wait 50s Before Polling",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -1000,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.RENDER_SERVICE_URL.replace(/\\/+$/, '') }}/api/job-status/{{ $json.clip_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.AL_HAQQ_API_SECRET_KEY }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "node-poll-job-status",
+      "name": "📡 9. Poll Job Status (GET /api/job-status)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -760,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cond-is-completed",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "completed",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "node-if-job-completed",
+      "name": "❓ 10. Is Render Completed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -520,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Stateless timeout based on job created_at\nconst item = $input.first().json;\nconst createdAt = Number(item.created_at || (Date.now() / 1000));\nconst ageSec = (Date.now() / 1000) - createdAt;\nif (ageSec > 2700) {\n  throw new Error(`Render job timed out after ${Math.round(ageSec)}s: ${item.clip_id}`);\n}\nreturn [{ json: item }];"
+      },
+      "id": "node-poll-retry-counter",
+      "name": "🔄 Loop Counter (Max 50 Iterations)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -520,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.RENDER_SERVICE_URL.replace(/\\/+$/, '') }}{{ $json.download_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.AL_HAQQ_API_SECRET_KEY }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "id": "node-download-rendered-mp4",
+      "name": "⬇️ 11. Download Rendered MP4",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -280,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "video",
+        "operation": "upload",
+        "binaryPropertyName": "data",
+        "title": "={{ $('📝 6. Prepare Batch Payloads & Schedules').item.json.yt_title }}",
+        "regionCode": "IN",
+        "categoryId": "27",
+        "options": {
+          "description": "={{ $('📝 6. Prepare Batch Payloads & Schedules').item.json.yt_description }}",
+          "notifySubscribers": true,
+          "privacyStatus": "private",
+          "publishAt": "={{ $('📝 6. Prepare Batch Payloads & Schedules').item.json.scheduled_publish_time }}",
+          "selfDeclaredMadeForKids": false,
+          "tags": "={{ $('📝 6. Prepare Batch Payloads & Schedules').item.json.tags }}"
+        }
+      },
+      "id": "node-upload-yt-channel",
+      "name": "🚀 12. Upload to YouTube (Scheduled)",
+      "type": "n8n-nodes-base.youTube",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $env.GOOGLE_SHEET_ID }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Clips_Queue",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Status": "completed",
+            "Clip_ID": "={{ $('📝 6. Prepare Batch Payloads & Schedules').item.json.clip_id }}",
+            "YT_URL": "={{ $('📝 6. Prepare Batch Payloads & Schedules').item.json.category === 'shorts' ? 'https://youtube.com/shorts/' + $json.id : 'https://youtu.be/' + $json.id }}"
+          },
+          "matchingColumns": [
+            "Clip_ID"
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-update-sheet-completed",
+      "name": "✅ 13. Mark Sheet Row as Completed",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        200,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "1306188611",
+        "text": "=🎉 <b>Al Haqq: Video Scheduled Successfully!</b>\n\n📌 <b>Title:</b> {{ $('📝 6. Prepare Batch Payloads & Schedules').item.json.yt_title.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') }}\n🎬 <b>Category:</b> {{ $('📝 6. Prepare Batch Payloads & Schedules').item.json.category }}\n⏱️ <b>Duration:</b> {{ $('📝 6. Prepare Batch Payloads & Schedules').item.json.duration }}s\n📅 <b>Scheduled For:</b> {{ $('📝 6. Prepare Batch Payloads & Schedules').item.json.scheduled_publish_time }}\n🔗 <b>Link:</b> {{ $('📝 6. Prepare Batch Payloads & Schedules').item.json.category === 'shorts' ? 'https://youtube.com/shorts/' + $json.id : 'https://youtu.be/' + $json.id }}\n⏰ {{ $now.setZone(\"Asia/Kolkata\").toFormat(\"HH:mm\") }} IST",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "node-telegram-success-s2",
+      "name": "📨 14. Telegram - Scheduled Success Alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        440,
+        500
+      ]
+    }
+  ],
+  "connections": {
+    "⏰ Morning Batch Trigger (7:00 AM IST)": {
+      "main": [
+        [
+          {
+            "node": "🔔 1. Ping Render Engine (GET /health)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "▶️ Manual Test Trigger": {
+      "main": [
+        [
+          {
+            "node": "🔔 1. Ping Render Engine (GET /health)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔔 1. Ping Render Engine (GET /health)": {
+      "main": [
+        [
+          {
+            "node": "⏳ 2. Wait 50s (Cold Start)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⏳ 2. Wait 50s (Cold Start)": {
+      "main": [
+        [
+          {
+            "node": "🔍 3. Check Render Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 3. Check Render Health": {
+      "main": [
+        [
+          {
+            "node": "❓ 4. Is Render Awake?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "❓ 4. Is Render Awake?": {
+      "main": [
+        [
+          {
+            "node": "📊 5. Get Up To 5 Pending Clips",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "⏳ Wait 30s Retry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⏳ Wait 30s Retry": {
+      "main": [
+        [
+          {
+            "node": "🔍 3. Check Render Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📊 5. Get Up To 5 Pending Clips": {
+      "main": [
+        [
+          {
+            "node": "❓ Any Pending Clips?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "❓ Any Pending Clips?": {
+      "main": [
+        [
+          {
+            "node": "📝 6. Prepare Batch Payloads & Schedules",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🛑 No Pending Clips (Done)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📝 6. Prepare Batch Payloads & Schedules": {
+      "main": [
+        [
+          {
+            "node": "🎬 7. Call Render Async (/api/render-clip-async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🎬 7. Call Render Async (/api/render-clip-async)": {
+      "main": [
+        [
+          {
+            "node": "⏳ 8. Wait 50s Before Polling",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⏳ 8. Wait 50s Before Polling": {
+      "main": [
+        [
+          {
+            "node": "📡 9. Poll Job Status (GET /api/job-status)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📡 9. Poll Job Status (GET /api/job-status)": {
+      "main": [
+        [
+          {
+            "node": "❓ 10. Is Render Completed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "❓ 10. Is Render Completed?": {
+      "main": [
+        [
+          {
+            "node": "⬇️ 11. Download Rendered MP4",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🔄 Loop Counter (Max 50 Iterations)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔄 Loop Counter (Max 50 Iterations)": {
+      "main": [
+        [
+          {
+            "node": "⏳ 8. Wait 50s Before Polling",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⬇️ 11. Download Rendered MP4": {
+      "main": [
+        [
+          {
+            "node": "🚀 12. Upload to YouTube (Scheduled)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🚀 12. Upload to YouTube (Scheduled)": {
+      "main": [
+        [
+          {
+            "node": "✅ 13. Mark Sheet Row as Completed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "✅ 13. Mark Sheet Row as Completed": {
+      "main": [
+        [
+          {
+            "node": "📨 14. Telegram - Scheduled Success Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Kolkata"
+  }
+}
