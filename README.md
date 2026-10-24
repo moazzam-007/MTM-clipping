@@ -8,91 +8,57 @@ Fully automated video repurposing service that monitors long Islamic lectures (M
 
 1. **Lightweight YouTube Streamer (`modules/youtube_engine.py`)**:
    - Streams audio and cuts 720p HD clips directly from YouTube without downloading full multi-gigabyte videos.
-   - Bypasses bot checks using Node.js runtime and Android player client.
+   - Guarded with canonical URL validation and argument injection protections (`modules/safe_url.py`).
 
 2. **Groq Whisper Large-v3 Speech-to-Text (`modules/transcription_engine.py`)**:
    - Ultra-fast transcription of Urdu speech with word/segment timestamps.
-   - Dual Groq API key rotation with automatic failover.
+   - Dual Groq API key rotation with automatic cooldown failover.
+   - Per-chunk disk persistence: already-transcribed audio chunks are never re-transcribed on retry.
 
 3. **Gemini AI Topic Classifier (`modules/gemini_engine.py`)**:
    - **Zero "Adhuri Baat" Rule**: Identifies complete questions, rulings, and naseehat from start to finish.
+   - **Whisper Boundary Snapping**: proposed start/end timestamps snap to nearest Whisper phrase boundaries.
    - **Dual Categorization**:
-     - **Shorts** (45s to 175s, < 3 minutes): Optimized for YouTube Shorts shelf.
+     - **Shorts** (35s to 175s, < 3 minutes): Tagged with `#Shorts`.
      - **Mini-Long** (3 to 6 minutes max): Deep discussions categorized as regular YouTube videos.
    - Generates Roman Urdu Twitter hook question (< 90 chars), YouTube titles, descriptions, and hashtags.
 
 4. **OpenCV Auto Face-Centering (`modules/face_engine.py`)**:
-   - Detects the speaker's face coordinates in the video frame using Haar Cascades.
-   - Automatically calculates the horizontal crop offset so the speaker is always centered in the 1:1 box.
+   - Multi-frame sampling (5 frames across duration) with median filtering to prevent single-frame anomalies.
+   - Automatically calculates horizontal crop offset so the speaker is always centered in the 1:1 box.
 
 5. **Dual-Language Subtitle Engine (`modules/subtitle_engine.py`)**:
-   - **Top Line (Arabic)**: Quranic Ayat / Hadith in Golden/Amber (`#FBBF24`) with proper bidirectional Arabic reshaping.
-   - **Bottom Line (English)**: Crisp Solid White (`#FFFFFF`) translation.
-   - **35% Frosted Black Scrim**: Placed inside the lower 20% of the video box, safely above the YouTube Shorts overlay and red seek bar.
+   - **Top Line (Arabic)**: Quranic Ayat / Hadith in Golden/Amber (`#FBBF24`) with HarfBuzz/Raqm diacritics (Harakat) preservation.
+   - **Bottom Line (English)**: Crisp Solid White (`#FFFFFF`) translation with 2-line word wrapping.
+   - **2px Dark Outline Stroke**: 100% readable over bright/white clothing (e.g. white kurta and pagri).
 
 6. **Template Compositor (`modules/video_engine.py`)**:
-   - Renders onto the official `AL HAQQQ TEMP.jpg` template with dynamic bold typography.
-   - 100% memory-safe streaming for Render.com free tier (512MB RAM limit).
+   - Renders onto the official template with dynamic bold typography and adaptive font sizing.
+   - Explicit composite duration `-t` and dynamic duration-scaled timeout.
 
 ---
 
-## 🛠️ API Endpoints
+## 🛠️ API Endpoints (Protected by `X-API-Key`)
 
-- `GET /health` -> Healthcheck endpoint
-- `POST /api/process-video` -> Starts async video processing job
-  ```json
-  {
-    "url": "https://youtu.be/z_9E0w_2IwY",
-    "max_clips": 5,
-    "webhook_url": "https://your-n8n-instance.com/webhook/video-ready"
-  }
-  ```
-  Returns:
-  ```json
-  {
-    "job_id": "job_1a2b3c4d",
-    "status": "queued",
-    "status_url": "/api/status/job_1a2b3c4d"
-  }
-  ```
-- `GET /api/status/{job_id}` -> Checks progress (0 to 100%) and returns rendered clips list.
-- `GET /api/download/{job_id}/{clip_filename}` -> Downloads final rendered MP4.
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/health` | Health check and wake ping (open) |
+| `POST` | `/api/extract-topics` | **Stage 1**: Extracts candidate clips with timestamps & metadata |
+| `POST` | `/api/render-clip-async` | **Stage 2**: Dispatches asynchronous rendering job (returns `clip_id`) |
+| `GET` | `/api/job-status/{clip_id}` | Polling endpoint for job completion and download URL |
+| `GET` | `/api/download/{job_id}/{file}` | Streams final rendered MP4 |
+| `DELETE` | `/api/jobs/{clip_id}` | Purges temporary job directory after YouTube upload |
 
 ---
 
-## 📦 Local Setup & Testing
+## ⚡ n8n Workflows
 
-```bash
-# 1. Install dependencies
-pip install -r requirements.txt
+1. **Stage 1 (`n8n_stage1_extract_topics.json`)**:
+   - Monitors 4 official MTM YouTube channels via RSS with round-robin selection.
+   - Calls `/api/extract-topics` and appends topics to Google Sheet `Clips_Queue`.
+   - Runs on daily schedule at 22:00 (10:00 PM IST).
 
-# 2. Configure .env with your credentials
-# (Copy from .env.example)
-
-# 3. Start local development server
-python main.py
-```
-
----
-
-## ☁️ Deploy to Render.com (100% Free Tier)
-
-1. Push this repository to GitHub.
-2. In Render.com Dashboard:
-   - Click **New** -> **Blueprint**.
-   - Select your repository.
-   - Render detects `render.yaml` and deploys the Docker container.
-3. Add Environment Variables:
-   - `GEMINI_API_KEY`
-   - `GROQ_API_KEY`
-   - `GROQ_API_KEY_FALLBACK`
-   - `API_SECRET_KEY`
-
----
-
-## ⚡ n8n Workflow Automation
-
-Import `n8n_workflow_shorts.json` into your n8n instance:
-- Monitors the YouTube channel RSS feed for new lecture uploads.
-- Calls Render `/api/process-video`.
-- Downloads completed clips and uploads directly to your YouTube channel using the n8n **YouTube Node**.
+2. **Stage 2 (`n8n_stage2_render_and_publish.json`)**:
+   - Wakes Render container, polls for render completion with Milan Voima async polling.
+   - Uploads to YouTube with native scheduled publishing (`publishAt` in 5 spaced IST slots).
+   - Updates Google Sheet row to `completed` and sends Telegram confirmation.

@@ -10,6 +10,8 @@ from typing import Dict, Any, List
 from groq import Groq
 import config
 
+import time
+
 logger = logging.getLogger("al-haqq-engine.transcription")
 
 class TranscriptionEngine:
@@ -17,44 +19,70 @@ class TranscriptionEngine:
         self.primary_key = config.GROQ_API_KEY
         self.fallback_key = config.GROQ_API_KEY_FALLBACK
         self.model = config.GROQ_WHISPER_MODEL
+        self._key_cooldown: Dict[str, float] = {}
+
+    def _call_groq_whisper(self, api_key: str, audio_path: Path):
+        client = Groq(api_key=api_key)
+        with open(audio_path, "rb") as f:
+            return client.audio.transcriptions.create(
+                file=(audio_path.name, f),
+                model=self.model,
+                language="ur",
+                response_format="verbose_json"
+            )
 
     def transcribe(self, audio_path: Path, cache_path: Path = None) -> Dict[str, Any]:
         """
-        Transcribes speech using Groq Whisper Large-v3.
+        Transcribes speech using Groq Whisper Large-v3 with cooldown failover.
         Returns full text and word/phrase segments with timestamps.
         """
         if cache_path and cache_path.exists():
             logger.info(f"Loading cached transcript from {cache_path}")
-            with open(cache_path, "r", encoding="utf-8") as f:
-                return json.load(f)
+            try:
+                with open(cache_path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.warning(f"Could not read cache {cache_path}: {e}, re-transcribing...")
 
         logger.info(f"Transcribing {audio_path.name} via Groq ({self.model})...")
         
-        # 1. Try Primary Groq Key
+        now = time.time()
+        keys_to_try = []
+        if self.primary_key and self._key_cooldown.get(self.primary_key, 0) < now:
+            keys_to_try.append(("primary", self.primary_key))
+        if self.fallback_key and self._key_cooldown.get(self.fallback_key, 0) < now:
+            keys_to_try.append(("fallback", self.fallback_key))
+
+        # If both are cooled down, force trying both anyway
+        if not keys_to_try:
+            if self.primary_key:
+                keys_to_try.append(("primary", self.primary_key))
+            if self.fallback_key:
+                keys_to_try.append(("fallback", self.fallback_key))
+
+        if not keys_to_try:
+            raise ValueError("No GROQ_API_KEY is configured")
+
         res = None
-        try:
-            if not self.primary_key:
-                raise ValueError("GROQ_API_KEY is not configured")
-            client = Groq(api_key=self.primary_key)
-            with open(audio_path, "rb") as f:
-                res = client.audio.transcriptions.create(
-                    file=(audio_path.name, f),
-                    model=self.model,
-                    language="ur",
-                    response_format="verbose_json"
-                )
-        except Exception as e:
-            logger.warning(f"Primary Groq key error: {e}. Attempting fallback key...")
-            if not self.fallback_key:
-                raise RuntimeError("Primary Groq key failed and no fallback key provided!") from e
-            client = Groq(api_key=self.fallback_key)
-            with open(audio_path, "rb") as f:
-                res = client.audio.transcriptions.create(
-                    file=(audio_path.name, f),
-                    model=self.model,
-                    language="ur",
-                    response_format="verbose_json"
-                )
+        last_err = None
+        for key_label, key_val in keys_to_try:
+            try:
+                logger.info(f"Attempting Whisper transcription with {key_label} key...")
+                res = self._call_groq_whisper(key_val, audio_path)
+                logger.info(f"Whisper transcription succeeded with {key_label} key!")
+                break
+            except Exception as e:
+                last_err = e
+                # Set 60s cooldown on rate-limit / quota errors
+                err_str = str(e).lower()
+                if "rate_limit" in err_str or "429" in err_str or "quota" in err_str:
+                    logger.warning(f"Groq {key_label} key rate-limited. Setting 60s cooldown.")
+                    self._key_cooldown[key_val] = time.time() + 60.0
+                else:
+                    logger.warning(f"Groq {key_label} key failed: {e}")
+
+        if res is None:
+            raise RuntimeError(f"All Groq Whisper keys failed: {last_err}") from last_err
 
         # Normalize segments into dicts
         raw_segments = getattr(res, "segments", []) or []
@@ -101,8 +129,9 @@ class TranscriptionEngine:
             offset = float(chunk["start_offset"])
             logger.info(f"Processing chunk {chunk.get('index', 0)} (offset {offset:.1f}s)...")
             
-            # Transcribe individual chunk
-            chunk_res = self.transcribe(audio_path=chunk_path)
+            # Transcribe individual chunk with guaranteed local disk cache
+            chunk_cache_path = chunk_path.with_suffix(".transcript.json")
+            chunk_res = self.transcribe(audio_path=chunk_path, cache_path=chunk_cache_path)
             chunk_text = chunk_res.get("text", "").strip()
             if chunk_text:
                 full_text_parts.append(chunk_text)

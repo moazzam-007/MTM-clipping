@@ -9,6 +9,8 @@ import subprocess
 from pathlib import Path
 from typing import Dict, Any, List
 
+from modules.safe_url import canonical_youtube_url
+
 logger = logging.getLogger("al-haqq-engine.youtube")
 
 class YouTubeEngine:
@@ -16,54 +18,74 @@ class YouTubeEngine:
     def get_video_info(video_url: str) -> Dict[str, Any]:
         """
         Fetches YouTube metadata and direct playable stream URL using yt-dlp with Node.js runtime.
+        Guarded with canonical URL validation and argument injection protections.
         """
-        logger.info(f"Resolving video info and stream for: {video_url}")
+        clean_url = canonical_youtube_url(video_url)
+        logger.info(f"Resolving video info and stream for: {clean_url}")
         
         # 1. Fetch metadata with --no-playlist
         meta_cmd = [
             "yt-dlp",
+            "--ignore-config",
             "--js-runtimes", "node",
             "--no-playlist",
             "--dump-json",
-            video_url
+            "--",
+            clean_url
         ]
         try:
-            res = subprocess.run(meta_cmd, capture_output=True, text=True, timeout=45, check=True)
+            res = subprocess.run(meta_cmd, capture_output=True, text=True, timeout=60, check=True)
             meta = json.loads(res.stdout)
         except Exception as e:
             logger.warning(f"Full JSON dump failed ({e}), falling back to basic metadata...")
             basic_cmd = [
                 "yt-dlp",
+                "--ignore-config",
                 "--js-runtimes", "node",
                 "--no-playlist",
                 "--max-downloads", "1",
                 "--print", "%(id)s||%(title)s||%(duration)s",
-                video_url
+                "--",
+                clean_url
             ]
-            basic_res = subprocess.run(basic_cmd, capture_output=True, text=True, timeout=30, check=True)
-            parts = basic_res.stdout.strip().splitlines()[-1].split("||")
+            basic_res = subprocess.run(basic_cmd, capture_output=True, text=True, timeout=40, check=True)
+            lines = [l for l in basic_res.stdout.strip().splitlines() if l.strip()]
+            last_line = lines[-1] if lines else ""
+            parts = last_line.split("||")
             dur = 3600.0
-            try:
-                dur = float(parts[2]) if len(parts) > 2 else 3600.0
-            except ValueError:
-                dur = 3600.0
+            if len(parts) >= 3:
+                v_id = parts[0]
+                v_title = "||".join(parts[1:-1])
+                try:
+                    dur = float(parts[-1])
+                except (ValueError, TypeError):
+                    dur = 3600.0
+            elif len(parts) == 2:
+                v_id = parts[0]
+                v_title = parts[1]
+            else:
+                v_id = parts[0] if parts else "unknown"
+                v_title = "Mufti Tariq Masood Bayan"
+
             meta = {
-                "id": parts[0],
-                "title": parts[1] if len(parts) > 1 else "Mufti Tariq Masood Bayan",
+                "id": v_id,
+                "title": v_title if v_title else "Mufti Tariq Masood Bayan",
                 "duration": dur
             }
 
         # 2. Fetch direct stream URL (prioritize 720p adaptive stream, fallback 22, then 18)
         stream_cmd = [
             "yt-dlp",
+            "--ignore-config",
             "--js-runtimes", "node",
             "--no-playlist",
             "--extractor-args", "youtube:player_client=android",
             "-f", "bestvideo[height<=720]+bestaudio/best[height<=720]/22/18/best",
             "-g",
-            video_url
+            "--",
+            clean_url
         ]
-        stream_res = subprocess.run(stream_cmd, capture_output=True, text=True, timeout=45, check=True)
+        stream_res = subprocess.run(stream_cmd, capture_output=True, text=True, timeout=60, check=True)
         lines = [line.strip() for line in stream_res.stdout.strip().splitlines() if line.strip().startswith("http")]
         video_stream = lines[0] if lines else ""
         audio_stream = lines[1] if len(lines) > 1 else ""
@@ -219,7 +241,9 @@ class YouTubeEngine:
                 str(output_path)
             ]
 
-        res = subprocess.run(ff_cmd, capture_output=True, text=True, timeout=120)
+        # Dynamic timeout scaled to duration (at least 240s, or 6x duration on 0.1 CPU)
+        cut_timeout = max(240, int(duration_sec * 6))
+        res = subprocess.run(ff_cmd, capture_output=True, text=True, timeout=cut_timeout)
         if res.returncode != 0:
             logger.error(f"FFmpeg video cutting failed: {res.stderr[-400:]}")
             raise RuntimeError(f"FFmpeg video cutting failed: {res.stderr[-200:]}")

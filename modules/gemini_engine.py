@@ -8,9 +8,8 @@ import re
 import json
 import logging
 import time
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from groq import Groq
-import google.generativeai as genai
 import config
 
 logger = logging.getLogger("al-haqq-engine.gemini")
@@ -140,9 +139,10 @@ class GeminiEngine:
         except Exception as sdk_err:
             logger.warning(f"Modern google-genai SDK failed: {sdk_err}")
 
-        # 2. Try legacy google.generativeai
+        # 2. Try legacy google.generativeai (lazy loaded to save memory)
         if not raw_text and self.api_key:
             try:
+                import google.generativeai as genai
                 genai.configure(api_key=self.api_key)
                 for model_name in [self.primary_model, "gemini-2.0-flash", "gemini-2.0-flash-lite"]:
                     try:
@@ -179,43 +179,49 @@ class GeminiEngine:
         if not raw_text:
             raise RuntimeError("All AI models failed to generate topics!")
 
-        # Strip markdown codeblocks if present
-        cleaned_text = raw_text
-        if "```" in cleaned_text:
-            cleaned_text = re.sub(r'```(?:json)?\s*([\s\S]*?)\s*```', r'\1', cleaned_text).strip()
+        # Safe and robust JSON extraction (handles code fences, truncated buffers, and object wrappers)
+        clips_raw = self._safe_parse_json(raw_text)
 
-        # Robust regex extraction of JSON array or object
-        match = re.search(r'\[[\s\S]*\]', cleaned_text)
-        if match:
-            json_str = match.group(0)
-            clips_raw = json.loads(json_str)
-        else:
-            # Handle possible {"clips": [...]} or {"topics": [...]} from Groq json_object
-            obj_match = re.search(r'\{[\s\S]*\}', cleaned_text)
-            if obj_match:
-                parsed_obj = json.loads(obj_match.group(0))
-                clips_raw = parsed_obj.get("clips") or parsed_obj.get("topics") or list(parsed_obj.values())[0]
-            else:
-                logger.error(f"Could not find JSON array in raw response: {raw_text[:200]}")
-                raise ValueError("LLM response did not contain a valid JSON array")
+        # Helper to snap timestamps to nearest Whisper segment boundary (preventing cut-off speech)
+        def _snap_to_boundary(target_sec: float, is_start_boundary: bool, tol: float = 3.5) -> float:
+            if not segments:
+                return target_sec
+            b_key = "start" if is_start_boundary else "end"
+            best_time = target_sec
+            min_dist = float("inf")
+            for seg in segments:
+                t_val = float(seg.get(b_key, 0.0)) + offset_sec
+                dist = abs(t_val - target_sec)
+                if dist < min_dist:
+                    min_dist = dist
+                    best_time = t_val
+            if min_dist <= tol:
+                return round(best_time, 1)
+            return round(target_sec, 1)
 
-        if not isinstance(clips_raw, list):
-            raise ValueError(f"Expected JSON list of clips, got {type(clips_raw)}")
-
-        # Post-validate, sanitize, apply audio padding, and enforce YouTube SEO tags
+        # Post-validate, sanitize, snap to Whisper boundaries, apply audio padding, and enforce YouTube SEO tags
         valid_clips = []
         for c in clips_raw:
             try:
-                s_t = float(c.get("start_time", 0))
-                e_t = float(c.get("end_time", 0))
+                raw_s = float(c.get("start_time", 0))
+                raw_e = float(c.get("end_time", 0))
+                
+                if raw_s < 0 or raw_e <= raw_s:
+                    continue
+
+                # Snap boundaries to nearest Whisper sentence/phrase
+                snapped_s = _snap_to_boundary(raw_s, is_start_boundary=True)
+                snapped_e = _snap_to_boundary(raw_e, is_start_boundary=False)
                 
                 # Audio padding: 0.3s start lead-in and 0.5s end tail for seamless audio
-                padded_start = max(0.0, round(s_t - 0.3, 1))
-                padded_end = round(e_t + 0.5, 1)
-                dur = padded_end - padded_start
+                padded_start = max(0.0, round(snapped_s - 0.3, 1))
+                padded_end = round(snapped_e + 0.5, 1)
+                dur = round(padded_end - padded_start, 1)
 
-                if s_t >= 0 and e_t > s_t and dur >= config.SHORTS_MIN_DURATION and dur <= config.MINI_LONG_MAX_DURATION:
-                    cat = "shorts" if dur <= config.SHORTS_MAX_DURATION else "mini_long"
+                if dur >= config.SHORTS_MIN_DURATION and dur <= config.MINI_LONG_MAX_DURATION:
+                    # If core duration was under 175s, strictly treat as shorts
+                    core_dur = snapped_e - snapped_s
+                    cat = "shorts" if core_dur <= config.SHORTS_MAX_DURATION else "mini_long"
                     
                     # Enforce strict YouTube algorithm rule for #Shorts tag
                     yt_title = str(c.get("yt_title", "")).strip()[:100]
@@ -240,9 +246,9 @@ class GeminiEngine:
                     valid_clips.append({
                         "start_time": padded_start,
                         "end_time": padded_end,
-                        "raw_start_time": round(s_t, 1),
-                        "raw_end_time": round(e_t, 1),
-                        "duration": round(dur, 1),
+                        "raw_start_time": round(raw_s, 1),
+                        "raw_end_time": round(raw_e, 1),
+                        "duration": dur,
                         "category": cat,
                         "first_words": str(c.get("first_words", "")).strip()[:80],
                         "last_words": str(c.get("last_words", "")).strip()[:80],
@@ -255,8 +261,63 @@ class GeminiEngine:
                         "yt_description": str(c.get("yt_description", "")).strip()[:1000],
                         "tags": tags
                     })
+                    
+                    if len(valid_clips) >= max_clips:
+                        break
             except (ValueError, TypeError) as parse_err:
                 logger.warning(f"Skipping malformed topic: {parse_err}")
 
-        logger.info(f"Successfully extracted and sanitized {len(valid_clips)} valid clips!")
+        logger.info(f"Successfully extracted, snapped, and sanitized {len(valid_clips)} valid clips!")
         return valid_clips
+
+    @staticmethod
+    def _safe_parse_json(raw_text: str) -> List[Dict[str, Any]]:
+        """Safely parses JSON array or object from raw LLM output with multiple fallbacks."""
+        cleaned = raw_text.strip()
+        if "```" in cleaned:
+            cleaned = re.sub(r'```(?:json)?\s*([\s\S]*?)\s*```', r'\1', cleaned).strip()
+
+        # Try direct parse
+        try:
+            data = json.loads(cleaned)
+            if isinstance(data, list):
+                return data
+            if isinstance(data, dict):
+                for key in ("clips", "topics", "items", "data"):
+                    if isinstance(data.get(key), list):
+                        return data[key]
+                for v in data.values():
+                    if isinstance(v, list):
+                        return v
+        except json.JSONDecodeError:
+            pass
+
+        # Try bracket slice parse
+        s_idx = cleaned.find('[')
+        e_idx = cleaned.rfind(']')
+        if s_idx != -1 and e_idx != -1 and e_idx > s_idx:
+            try:
+                arr = json.loads(cleaned[s_idx:e_idx + 1])
+                if isinstance(arr, list):
+                    return arr
+            except json.JSONDecodeError:
+                pass
+
+        # Try object slice parse
+        s_obj = cleaned.find('{')
+        e_obj = cleaned.rfind('}')
+        if s_obj != -1 and e_obj != -1 and e_obj > s_obj:
+            try:
+                obj = json.loads(cleaned[s_obj:e_obj + 1])
+                if isinstance(obj, dict):
+                    for key in ("clips", "topics", "items"):
+                        if isinstance(obj.get(key), list):
+                            return obj[key]
+                    for v in obj.values():
+                        if isinstance(v, list):
+                            return v
+            except json.JSONDecodeError:
+                pass
+
+        logger.error(f"Unparseable LLM output: {raw_text[:250]}")
+        raise ValueError("Could not extract a valid JSON list of clips from LLM response")

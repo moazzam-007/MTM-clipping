@@ -7,13 +7,13 @@
           "interval": [
             {
               "field": "cronExpression",
-              "expression": "0 8 * * *"
+              "expression": "0 22 * * *"
             }
           ]
         }
       },
       "id": "node-schedule-daily",
-      "name": "⏰ Daily Schedule (8:00 AM)",
+      "name": "⏰ Daily Schedule (10:00 PM IST)",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [
@@ -66,7 +66,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Parse YouTube Atom Feed for each channel and collect candidate videos (up to 15 per channel = 60 total)\nconst allCandidates = [];\n\nfor (const item of $input.all()) {\n  const xmlText = String(item.json.data || item.json.body || '');\n  if (!xmlText || !xmlText.includes('<entry>')) {\n    continue;\n  }\n\n  const entries = xmlText.match(/<entry>[\\s\\S]*?<\\/entry>/g) || [];\n  for (const entry of entries) {\n    const idMatch = entry.match(/<yt:videoId>(.*?)<\\/yt:videoId>/);\n    const titleMatch = entry.match(/<title>(.*?)<\\/title>/);\n    const linkMatch = entry.match(/<link rel=\"alternate\" href=\"(.*?)\"\\/>/);\n    const publishedMatch = entry.match(/<published>(.*?)<\\/published>/);\n\n    const videoId = idMatch ? idMatch[1].trim() : '';\n    if (!videoId) continue;\n\n    let title = titleMatch ? titleMatch[1].trim() : 'Mufti Tariq Masood Bayan';\n    // Skip explicit YouTube Shorts in feed\n    if (/#shorts\\b/i.test(title)) {\n      continue;\n    }\n\n    // Clean XML entities in title\n    title = title\n      .replace(/&amp;/g, '&')\n      .replace(/&lt;/g, '<')\n      .replace(/&gt;/g, '>')\n      .replace(/&quot;/g, '\"')\n      .replace(/&#39;/g, \"'\");\n\n    const url = linkMatch ? linkMatch[1].trim() : `https://youtu.be/${videoId}`;\n    const published = publishedMatch ? publishedMatch[1].trim() : new Date().toISOString();\n\n    allCandidates.push({\n      json: {\n        video_id: videoId,\n        title: title,\n        url: url,\n        published: published\n      }\n    });\n  }\n}\n\nif (allCandidates.length === 0) {\n  throw new Error(\"No video entries extracted from any of the MTM YouTube channels!\");\n}\n\nreturn allCandidates;"
+        "jsCode": "// Parse YouTube Atom Feed for each channel and collect candidate videos (up to 15 per channel = 60 total)\nconst allCandidates = [];\n\nfor (const item of $input.all()) {\n  const xmlText = String(item.json.data || item.json.body || '');\n  if (!xmlText || !xmlText.includes('<entry>')) {\n    continue;\n  }\n\n  const chTitleMatch = xmlText.match(/<author>[\\s\\S]*?<name>(.*?)<\\/name>/);\n  const channelName = chTitleMatch ? chTitleMatch[1].trim() : 'MTM Channel';\n\n  const entries = xmlText.match(/<entry>[\\s\\S]*?<\\/entry>/g) || [];\n  for (const entry of entries) {\n    const idMatch = entry.match(/<yt:videoId>(.*?)<\\/yt:videoId>/);\n    const titleMatch = entry.match(/<title>(.*?)<\\/title>/);\n    const linkMatch = entry.match(/<link rel=\"alternate\" href=\"(.*?)\"\\/>/);\n    const publishedMatch = entry.match(/<published>(.*?)<\\/published>/);\n\n    const videoId = idMatch ? idMatch[1].trim() : '';\n    if (!videoId) continue;\n\n    let title = titleMatch ? titleMatch[1].trim() : 'Mufti Tariq Masood Bayan';\n    if (/#shorts\\b/i.test(title)) {\n      continue;\n    }\n\n    title = title\n      .replace(/&amp;/g, '&')\n      .replace(/&lt;/g, '<')\n      .replace(/&gt;/g, '>')\n      .replace(/&quot;/g, '\"')\n      .replace(/&#39;/g, \"'\");\n\n    const url = linkMatch ? linkMatch[1].trim() : `https://youtu.be/${videoId}`;\n    const published = publishedMatch ? publishedMatch[1].trim() : new Date().toISOString();\n\n    allCandidates.push({\n      json: {\n        video_id: videoId,\n        channel_name: channelName,\n        title: title,\n        url: url,\n        published: published\n      }\n    });\n  }\n}\n\nif (allCandidates.length === 0) {\n  throw new Error(\"No video entries extracted from any of the MTM YouTube channels!\");\n}\n\nreturn allCandidates;"
       },
       "id": "node-parse-all-rss",
       "name": "📝 Parse All Candidate Videos",
@@ -82,7 +82,7 @@
         "operation": "read",
         "documentId": {
           "__rl": true,
-          "value": "={{ $env.GOOGLE_SHEET_ID || 'YOUR_GOOGLE_SHEET_ID_HERE' }}",
+          "value": "={{ $env.GOOGLE_SHEET_ID }}",
           "mode": "id"
         },
         "sheetName": {
@@ -104,7 +104,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Cross-reference candidate videos against Google Sheet to pick fresh / back-catalog videos (up to 4-5 videos total)\nconst existingRows = $input.all().map(i => i.json || {});\nconst processedVideoIds = new Set();\n\nfor (const r of existingRows) {\n  const vid = String(r.Video_ID || r.video_id || '').trim();\n  if (vid) {\n    processedVideoIds.add(vid);\n  }\n}\n\n// Retrieve candidates from the parser node\nconst candidateItems = $('📝 Parse All Candidate Videos').all().map(i => i.json || {});\nconst selectedVideos = [];\nconst selectedIds = new Set();\n\nfor (const c of candidateItems) {\n  if (!c.video_id) continue;\n  // If already processed in Google Sheet, skip\n  if (processedVideoIds.has(c.video_id)) continue;\n  // If already selected in this batch, skip\n  if (selectedIds.has(c.video_id)) continue;\n\n  selectedVideos.push({\n    json: c\n  });\n  selectedIds.add(c.video_id);\n\n  // Limit to 4-5 videos per daily execution\n  if (selectedVideos.length >= 5) {\n    break;\n  }\n}\n\nreturn selectedVideos;"
+        "jsCode": "// Cross-reference candidate videos against Google Sheet with 4-channel round-robin selection\nconst existingRows = $input.all().map(i => i.json || {});\nconst processedVideoIds = new Set();\n\nfor (const r of existingRows) {\n  const vid = String(r.Video_ID || r.video_id || '').trim();\n  if (vid) {\n    processedVideoIds.add(vid);\n  }\n}\n\nconst candidateItems = $('📝 Parse All Candidate Videos').all().map(i => i.json || {});\n\n// Group unprocessed candidates by channel\nconst channelBuckets = {};\nfor (const c of candidateItems) {\n  if (!c.video_id) continue;\n  if (processedVideoIds.has(c.video_id)) continue;\n  const ch = c.channel_name || 'default';\n  if (!channelBuckets[ch]) {\n    channelBuckets[ch] = [];\n  }\n  channelBuckets[ch].push(c);\n}\n\n// 4-Channel Round-Robin Selection (max 5 videos total)\nconst selectedVideos = [];\nconst selectedIds = new Set();\nconst channelKeys = Object.keys(channelBuckets);\n\nlet round = 0;\nlet progress = true;\n\nwhile (selectedVideos.length < 5 && progress) {\n  progress = false;\n  for (const ch of channelKeys) {\n    const list = channelBuckets[ch];\n    if (round < list.length) {\n      const vid = list[round];\n      if (!selectedIds.has(vid.video_id)) {\n        selectedVideos.push({ json: vid });\n        selectedIds.add(vid.video_id);\n        progress = true;\n        if (selectedVideos.length >= 5) break;\n      }\n    }\n  }\n  round++;\n}\n\nreturn selectedVideos;"
       },
       "id": "node-select-unprocessed-videos",
       "name": "🎯 Select 5 Fresh/Old Videos",
@@ -161,7 +161,7 @@
     },
     {
       "parameters": {
-        "url": "={{ ($env.RENDER_SERVICE_URL || 'https://your-render-service.onrender.com').replace(/\\/+$/, '') }}/health",
+        "url": "={{ $env.RENDER_SERVICE_URL.replace(/\\/+$/, '') }}/health",
         "options": {
           "timeout": 45000
         }
@@ -182,7 +182,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ ($env.RENDER_SERVICE_URL || 'https://your-render-service.onrender.com').replace(/\\/+$/, '') }}/api/extract-topics",
+        "url": "={{ $env.RENDER_SERVICE_URL.replace(/\\/+$/, '') }}/api/extract-topics",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -192,7 +192,7 @@
             },
             {
               "name": "X-API-Key",
-              "value": "={{ $env.AL_HAQQ_API_SECRET_KEY || 'your_secret_key' }}"
+              "value": "={{ $env.AL_HAQQ_API_SECRET_KEY }}"
             }
           ]
         },
@@ -228,7 +228,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Validate extracted clip boundaries and metadata\nconst validItems = [];\n\nfor (const item of $input.all()) {\n  const t = item.json || {};\n  const start = Number(t.start_time);\n  const end = Number(t.end_time);\n  const hook = String(t.roman_urdu_hook || '').trim();\n  const title = String(t.yt_title || '').trim();\n  \n  // Check finite numbers, start < end, duration between 35s and 360s\n  if (Number.isFinite(start) && Number.isFinite(end) && end > start) {\n    const dur = end - start;\n    if (dur >= 35 && dur <= 360 && hook.length > 5 && title.length > 5) {\n      validItems.push({\n        json: {\n          ...t,\n          start_time: start,\n          end_time: end,\n          duration_sec: parseFloat(dur.toFixed(1)),\n          roman_urdu_hook: hook,\n          yt_title: title\n        }\n      });\n    }\n  }\n}\n\nif (validItems.length === 0) {\n  throw new Error(\"No valid topics passed validation criteria!\");\n}\n\nreturn validItems;"
+        "jsCode": "// Validate extracted clip boundaries and metadata\nconst validItems = [];\n\nfor (const item of $input.all()) {\n  const t = item.json || {};\n  const start = Number(t.start_time);\n  const end = Number(t.end_time);\n  const hook = String(t.roman_urdu_hook || '').trim();\n  const title = String(t.yt_title || '').trim();\n  \n  // Check finite numbers, start < end, duration between 35s and 360s\n  if (Number.isFinite(start) && Number.isFinite(end) && end > start) {\n    const dur = end - start;\n    if (dur >= 35 && dur <= 360 && hook.length > 5 && title.length > 5) {\n      validItems.push({\n        json: {\n          ...t,\n          video_id: t.video_id || '',\n          video_url: t.video_url || '',\n          lecture_title: t.lecture_title || '',\n          start_time: start,\n          end_time: end,\n          duration_sec: parseFloat(dur.toFixed(1)),\n          roman_urdu_hook: hook,\n          yt_title: title\n        }\n      });\n    }\n  }\n}\n\nif (validItems.length === 0) {\n  throw new Error(\"No valid topics passed validation criteria!\");\n}\n\nreturn validItems;"
       },
       "id": "node-validate-topics",
       "name": "🛡️ Validate Clip Boundaries & Metadata",
@@ -244,7 +244,7 @@
         "operation": "append",
         "documentId": {
           "__rl": true,
-          "value": "={{ $env.GOOGLE_SHEET_ID || 'YOUR_GOOGLE_SHEET_ID_HERE' }}",
+          "value": "={{ $env.GOOGLE_SHEET_ID }}",
           "mode": "id"
         },
         "sheetName": {
@@ -256,10 +256,10 @@
           "mappingMode": "defineBelow",
           "value": {
             "Date": "={{ $now.toFormat('yyyy-MM-dd') }}",
-            "Clip_ID": "={{ $('🎯 Select 5 Fresh/Old Videos').first().json.video_id }}_{{ Math.round($json.start_time) }}",
-            "Video_ID": "={{ $('🎯 Select 5 Fresh/Old Videos').first().json.video_id }}",
-            "Video_URL": "={{ $('🎯 Select 5 Fresh/Old Videos').first().json.url }}",
-            "Lecture_Title": "={{ $('🎯 Select 5 Fresh/Old Videos').first().json.title }}",
+            "Clip_ID": "={{ $json.video_id }}_{{ Math.round($json.start_time) }}",
+            "Video_ID": "={{ $json.video_id }}",
+            "Video_URL": "={{ $json.video_url }}",
+            "Lecture_Title": "={{ $json.lecture_title }}",
             "Category": "={{ $json.category || 'shorts' }}",
             "Start_Sec": "={{ $json.start_time }}",
             "End_Sec": "={{ $json.end_time }}",

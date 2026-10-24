@@ -17,9 +17,9 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 from fastapi import FastAPI, BackgroundTasks, HTTPException, Header, Depends
 from fastapi.responses import FileResponse
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 import config
+from modules.safe_url import canonical_youtube_url
 from modules.youtube_engine import YouTubeEngine
 from modules.transcription_engine import TranscriptionEngine
 from modules.gemini_engine import GeminiEngine
@@ -27,18 +27,14 @@ from modules.video_engine import VideoEngine
 
 logger = logging.getLogger("al-haqq-engine.api")
 
+# In production, disable swagger/openapi docs to prevent reconnaissance
 app = FastAPI(
     title="Al Haqq Video Repurposing Engine",
     description="Automated YouTube Lecture to Shorts & Mini-Long Video Generator",
-    version="2.0.0"
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    version="2.0.0",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None
 )
 
 # Concurrency Gate: Strictly 1 heavy job at a time to stay under 512MB RAM cap
@@ -71,6 +67,11 @@ class ExtractTopicsRequest(BaseModel):
     max_duration_sec: int = Field(default=7200, ge=300, le=7200, description="Max duration to process (up to 120 mins)")
     chunk_duration_sec: int = Field(default=1200, ge=600, le=1800, description="Chunk length (20 mins default)")
 
+    @field_validator("url")
+    @classmethod
+    def validate_yt_url(cls, v: str) -> str:
+        return canonical_youtube_url(v)
+
 class RenderClipRequest(BaseModel):
     url: str
     start_time: float = Field(ge=0)
@@ -80,11 +81,21 @@ class RenderClipRequest(BaseModel):
     english_sub: Optional[str] = Field(default="", max_length=200)
     category: Optional[str] = "shorts"
 
+    @field_validator("url")
+    @classmethod
+    def validate_yt_url(cls, v: str) -> str:
+        return canonical_youtube_url(v)
+
 # ── Security Dependency ─────────────────────────────────────────────────────
 def verify_api_key(x_api_key: Optional[str] = Header(None)):
     if not config.API_SECRET_KEY:
         raise HTTPException(status_code=500, detail="API_SECRET_KEY is not configured on the server")
-    if not x_api_key or not secrets.compare_digest(x_api_key, config.API_SECRET_KEY):
+    
+    # Strictly byte-encode strings before compare_digest to prevent TypeError crash on non-ASCII input
+    user_key_bytes = (x_api_key or "").encode("utf-8")
+    server_key_bytes = config.API_SECRET_KEY.encode("utf-8")
+
+    if not x_api_key or not secrets.compare_digest(user_key_bytes, server_key_bytes):
         raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key header")
     return True
 
@@ -93,9 +104,7 @@ def verify_api_key(x_api_key: Optional[str] = Header(None)):
 def health_check():
     return {
         "status": "ok",
-        "service": "al-haqq-repurposing-engine",
-        "gemini_model": config.GEMINI_PRIMARY_MODEL,
-        "groq_model": config.GROQ_WHISPER_MODEL
+        "service": "al-haqq-repurposing-engine"
     }
 
 def _do_extract_topics(req: ExtractTopicsRequest, job_dir: Path) -> Dict[str, Any]:
@@ -133,10 +142,19 @@ def _do_extract_topics(req: ExtractTopicsRequest, job_dir: Path) -> Dict[str, An
         offset_sec=0.0
     )
 
+    v_id = yt_info.get("video_id")
+    v_title = yt_info.get("title")
+    
+    # Attach parent video metadata to every single topic item so n8n Split Out never loses it (Fixes F-01)
+    for t in topics:
+        t["video_id"] = v_id
+        t["video_url"] = req.url
+        t["lecture_title"] = v_title
+
     return {
         "status": "ok",
-        "video_id": yt_info.get("video_id"),
-        "title": yt_info.get("title"),
+        "video_id": v_id,
+        "title": v_title,
         "total_topics": len(topics),
         "topics": topics
     }
@@ -317,12 +335,11 @@ def get_job_status(clip_id: str, auth: bool = Depends(verify_api_key)):
         raise HTTPException(status_code=404, detail="Job ID not found")
     return job
 
-# ── SECURE DOWNLOAD ENDPOINT (Path Traversal Protected + Ephemeral Cleanup) ─
+# ── SECURE DOWNLOAD ENDPOINT (Path Traversal Protected) ────────────────────
 @app.get("/api/download/{job_id}/{clip_filename}")
 def download_clip(
     job_id: str,
     clip_filename: str,
-    background_tasks: BackgroundTasks,
     auth: bool = Depends(verify_api_key)
 ):
     # Sanitize inputs to prevent path traversal
@@ -341,25 +358,28 @@ def download_clip(
     if not target_path.exists() or not target_path.is_file():
         raise HTTPException(status_code=404, detail="Requested video file not found")
 
-    # Auto-cleanup file and parent dir once downloaded so Render container disk never fills up
-    def cleanup_downloaded_file(file_to_del: Path):
-        try:
-            if file_to_del.exists():
-                file_to_del.unlink()
-                parent_dir = file_to_del.parent
-                if parent_dir.exists() and not any(parent_dir.iterdir()):
-                    parent_dir.rmdir()
-                logger.info(f"Purged ephemeral render file {file_to_del.name}")
-        except Exception as err:
-            logger.warning(f"Error during file cleanup: {err}")
-
-    background_tasks.add_task(cleanup_downloaded_file, target_path)
-
     return FileResponse(
         path=str(target_path),
         media_type="video/mp4",
         filename=safe_filename
     )
+
+@app.delete("/api/jobs/{clip_id}")
+def delete_job(clip_id: str, auth: bool = Depends(verify_api_key)):
+    """Explicitly deletes job directory and cleans store once upload is complete."""
+    safe_clip_id = Path(clip_id).name
+    clip_dir = (config.JOBS_DIR / safe_clip_id).resolve()
+    try:
+        clip_dir.relative_to(config.JOBS_DIR.resolve())
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    if clip_dir.exists():
+        shutil.rmtree(clip_dir, ignore_errors=True)
+        logger.info(f"Purged job directory {safe_clip_id}")
+
+    JOBS_STORE.pop(safe_clip_id, None)
+    return {"status": "deleted", "clip_id": safe_clip_id}
 
 if __name__ == "__main__":
     import uvicorn
