@@ -5,12 +5,14 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Install system dependencies: FFmpeg, Node.js, OpenCV libs, and TrueType fonts
+# Install system dependencies: FFmpeg, Node.js, OpenCV libs, and TrueType fonts (including Arabic fonts)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     nodejs \
     fonts-dejavu-core \
     fonts-freefont-ttf \
+    fonts-noto-core \
+    fonts-hosny-amiri \
     libgl1 \
     libglib2.0-0 \
     curl \
@@ -29,4 +31,4 @@ RUN mkdir -p /app/jobs
 
 EXPOSE 10000
 
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-10000}"]
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-10000} --workers 1"]

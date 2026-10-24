@@ -1,6 +1,7 @@
 """
 modules/video_engine.py
 Composites the dynamic Twitter card template, face-centered video clip, and subtitles into a final 9:16 MP4.
+Includes memory limits and guaranteed cleanup of intermediate files.
 """
 
 import os
@@ -28,7 +29,8 @@ class VideoEngine:
         Loads AL HAQQQ TEMP.jpg, wraps and prints the Roman Urdu hook question,
         and returns the path to the background and the calculated bottom Y position.
         """
-        base_img = Image.open(self.template_path).convert("RGB")
+        with Image.open(self.template_path) as img:
+            base_img = img.convert("RGB")
         draw = ImageDraw.Draw(base_img)
 
         font_size = 32
@@ -38,6 +40,7 @@ class VideoEngine:
         x_start = 50
         y_start = 280
 
+        # Word wrap
         words = hook_text.split()
         lines = []
         current_line = []
@@ -52,6 +55,9 @@ class VideoEngine:
                 current_line = [word]
         if current_line:
             lines.append(" ".join(current_line))
+
+        # Clamp max lines to 3 so it never pushes the video off canvas
+        lines = lines[:3]
 
         line_height = 42
         current_y = y_start
@@ -72,70 +78,85 @@ class VideoEngine:
         output_mp4_path: Path
     ) -> Path:
         """
-        Full composition pipeline:
-        1. Auto face centering.
-        2. Template background with hook.
-        3. Subtitle overlay creation.
-        4. FFmpeg rendering to 720x1280 MP4.
+        Full composition pipeline with guaranteed cleanup and memory-safe FFmpeg encoding.
         """
         logger.info(f"Starting final video render for: {raw_clip_path.name}")
         temp_dir = output_mp4_path.parent
-        bg_img_path = temp_dir / "temp_template_bg.jpg"
-        sub_overlay_path = temp_dir / "temp_sub_overlay.png"
+        bg_img_path = temp_dir / f"bg_{output_mp4_path.stem}.jpg"
+        sub_overlay_path = temp_dir / f"sub_{output_mp4_path.stem}.png"
 
-        # 1. Prepare Background with Hook Text
-        _, last_text_y = self.prepare_template_with_hook(hook_text, bg_img_path)
+        try:
+            # 1. Prepare Background with Hook Text
+            _, last_text_y = self.prepare_template_with_hook(hook_text, bg_img_path)
 
-        # 2. Get Video Box Placement
-        video_box_w = config.VIDEO_BOX_WIDTH
-        video_box_h = config.VIDEO_BOX_HEIGHT
-        video_box_left = config.VIDEO_BOX_LEFT
-        video_box_top = max(last_text_y + 25, config.VIDEO_BOX_TOP)
+            # 2. Get Video Box Placement (clamped to prevent canvas overflow)
+            video_box_w = config.VIDEO_BOX_WIDTH
+            video_box_h = config.VIDEO_BOX_HEIGHT
+            video_box_left = config.VIDEO_BOX_LEFT
+            video_box_top = min(max(last_text_y + 25, config.VIDEO_BOX_TOP), 450)
 
-        # 3. Create Subtitle Overlay
-        self.subtitle_engine.create_caption_overlay(
-            video_width=video_box_w,
-            video_height=video_box_h,
-            arabic_text=arabic_text,
-            english_text=english_text,
-            output_png=sub_overlay_path
-        )
+            # 3. Create Subtitle Overlay
+            self.subtitle_engine.create_caption_overlay(
+                video_width=video_box_w,
+                video_height=video_box_h,
+                arabic_text=arabic_text,
+                english_text=english_text,
+                output_png=sub_overlay_path
+            )
 
-        # 4. Detect Face & Calculate Crop Offset
-        cap = cv2.VideoCapture(str(raw_clip_path))
-        src_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 1280)
-        src_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 720)
-        cap.release()
+            # 4. Detect Face & Calculate Crop Offset
+            cap = cv2.VideoCapture(str(raw_clip_path))
+            src_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 1280)
+            src_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 720)
+            cap.release()
 
-        square_dim = min(src_w, src_h)
-        crop_x = self.face_engine.calculate_crop_x(raw_clip_path, target_size=square_dim)
-        if crop_x < 0:
-            crop_x = (src_w - square_dim) // 2
+            square_dim = min(src_w, src_h)
+            crop_x = self.face_engine.calculate_crop_x(raw_clip_path)
+            if crop_x < 0:
+                crop_x = (src_w - square_dim) // 2
+                crop_x = crop_x - (crop_x % 2)
 
-        logger.info(f"Video geometry: {src_w}x{src_h} -> crop {square_dim}x{square_dim} at x={crop_x}")
+            crop_y = max(0, (src_h - square_dim) // 2)
+            crop_y = crop_y - (crop_y % 2)
 
-        # 5. FFmpeg Stream Composition
-        ff_cmd = [
-            "ffmpeg", "-y",
-            "-loop", "1", "-i", str(bg_img_path),
-            "-i", str(raw_clip_path),
-            "-loop", "1", "-i", str(sub_overlay_path),
-            "-filter_complex",
-            (
-                f"[1:v]crop=w={square_dim}:h={square_dim}:x={crop_x}:y=0,"
-                f"scale={video_box_w}:{video_box_h}[v_scaled];"
-                f"[v_scaled][2:v]overlay=0:0:shortest=1[v_with_sub];"
-                f"[0:v][v_with_sub]overlay={video_box_left}:{video_box_top}:shortest=1[outv]"
-            ),
-            "-map", "[outv]",
-            "-map", "1:a",
-            "-c:v", "libx264", "-preset", "fast", "-crf", "20",
-            "-c:a", "aac", "-b:a", "128k",
-            "-pix_fmt", "yuv420p",
-            "-movflags", "+faststart",
-            str(output_mp4_path)
-        ]
+            logger.info(f"Video geometry: {src_w}x{src_h} -> crop {square_dim}x{square_dim} at x={crop_x}, y={crop_y}")
 
-        subprocess.check_call(ff_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        logger.info(f"Final video rendered successfully: {output_mp4_path} ({output_mp4_path.stat().st_size / (1024*1024):.2f} MB)")
-        return output_mp4_path
+            # 5. FFmpeg Stream Composition with strict memory and thread caps
+            ff_cmd = [
+                "ffmpeg", "-y",
+                "-nostdin", "-loglevel", "error",
+                "-loop", "1", "-i", str(bg_img_path),
+                "-i", str(raw_clip_path),
+                "-loop", "1", "-i", str(sub_overlay_path),
+                "-filter_complex",
+                (
+                    f"[1:v]crop=w={square_dim}:h={square_dim}:x={crop_x}:y={crop_y},"
+                    f"scale={video_box_w}:{video_box_h}[v_scaled];"
+                    f"[v_scaled][2:v]overlay=0:0:shortest=1[v_with_sub];"
+                    f"[0:v][v_with_sub]overlay={video_box_left}:{video_box_top}:shortest=1[outv]"
+                ),
+                "-map", "[outv]",
+                "-map", "1:a?",
+                "-threads", "1",
+                "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+                "-bufsize", "2M",
+                "-c:a", "aac", "-b:a", "128k",
+                "-pix_fmt", "yuv420p",
+                "-movflags", "+faststart",
+                str(output_mp4_path)
+            ]
+
+            res = subprocess.run(ff_cmd, capture_output=True, text=True, timeout=240)
+            if res.returncode != 0:
+                logger.error(f"FFmpeg composite failed: {res.stderr[-400:]}")
+                raise RuntimeError(f"FFmpeg composite failed: {res.stderr[-200:]}")
+
+            logger.info(f"Final video rendered successfully: {output_mp4_path} ({output_mp4_path.stat().st_size / (1024*1024):.2f} MB)")
+            return output_mp4_path
+
+        finally:
+            # Guaranteed cleanup of intermediate temporary image files
+            if bg_img_path.exists():
+                bg_img_path.unlink()
+            if sub_overlay_path.exists():
+                sub_overlay_path.unlink()

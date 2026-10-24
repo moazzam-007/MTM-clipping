@@ -29,12 +29,12 @@ TEMPLATE_PATH = BASE_DIR / "AL HAQQQ TEMP.jpg"
 
 # ── API Credentials ─────────────────────────────────────────────────────────
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-GEMINI_PRIMARY_MODEL = os.getenv("GEMINI_PRIMARY_MODEL", "gemini-2.5-flash-lite").strip()
+GEMINI_PRIMARY_MODEL = os.getenv("GEMINI_PRIMARY_MODEL", "gemini-2.0-flash-lite-preview-02-05").strip()
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 GROQ_API_KEY_FALLBACK = os.getenv("GROQ_API_KEY_FALLBACK", "").strip()
 GROQ_WHISPER_MODEL = "whisper-large-v3"
-GROQ_FALLBACK_LLM = "qwen/qwen3.8-27b"
+GROQ_FALLBACK_LLM = "llama-3.3-70b-versatile"
 
 # Security & Port
 API_SECRET_KEY = os.getenv("API_SECRET_KEY", "").strip()
@@ -71,8 +71,12 @@ FONT_HOOK = resolve_font_path(FONT_HOOK_CANDIDATES)
 FONT_ARABIC_CANDIDATES = [
     "C:/Windows/Fonts/tahoma.ttf",
     "C:/Windows/Fonts/arial.ttf",
+    "/usr/share/fonts/truetype/hosny-amiri/amiri-bold.ttf",
+    "/usr/share/fonts/truetype/amiri/amiri-bold.ttf",
+    "/usr/share/fonts/truetype/amiri/Amiri-Bold.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSansArabic-Bold.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
-    "/usr/share/fonts/dejavu/DejaVuSans.ttf"
+    "/usr/share/fonts/truetype/freefont/FreeSans.ttf"
 ]
 FONT_ARABIC = resolve_font_path(FONT_ARABIC_CANDIDATES)

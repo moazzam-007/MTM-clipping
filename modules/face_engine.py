@@ -6,43 +6,53 @@ Automated Face Detection and Alignment using OpenCV to horizontally center Mufti
 import logging
 import cv2
 from pathlib import Path
-from typing import Tuple
 
 logger = logging.getLogger("al-haqq-engine.face")
 
 class FaceEngine:
     def __init__(self):
-        cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-        self.face_cascade = cv2.CascadeClassifier(cascade_path)
+        try:
+            cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+            self.face_cascade = cv2.CascadeClassifier(cascade_path)
+            if self.face_cascade.empty():
+                self.face_cascade = None
+                logger.warning("Haar cascade classifier loaded empty. Center crop will be used.")
+        except Exception as e:
+            self.face_cascade = None
+            logger.warning(f"Could not initialize face cascade: {e}. Center crop will be used.")
 
-    def calculate_crop_x(self, video_path: Path, target_size: int = 640) -> int:
+    def calculate_crop_x(self, video_path: Path) -> int:
         """
-        Samples a frame from the video clip, detects the face center,
-        and returns the horizontal offset 'crop_x' for a centered 1:1 crop.
+        Samples frames from the video clip, detects the face center,
+        and returns an even horizontal offset 'crop_x' for a centered 1:1 crop.
         """
         cap = cv2.VideoCapture(str(video_path))
         if not cap.isOpened():
-            logger.warning(f"Could not open video {video_path} for face detection. Using center crop.")
+            logger.warning(f"Could not open video {video_path} for face detection. Using default center crop.")
             return -1
 
-        # Jump to ~2 seconds into the video to avoid black transition frames
-        fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
-        cap.set(cv2.CAP_PROP_POS_FRAMES, int(fps * 2))
-        ret, frame = cap.read()
-        if not ret:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        try:
+            fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+            cap.set(cv2.CAP_PROP_POS_FRAMES, int(fps * 2))
             ret, frame = cap.read()
-        cap.release()
+            if not ret or frame is None:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                ret, frame = cap.read()
+        finally:
+            cap.release()
 
         if not ret or frame is None:
-            logger.warning("Could not read frame for face detection. Using center crop.")
+            logger.warning("Could not read frame for face detection. Using default center crop.")
             return -1
 
         height, width = frame.shape[:2]
         square_dim = min(width, height)
         default_center_x = (width - square_dim) // 2
 
-        # Convert to grayscale for detection
+        if not self.face_cascade:
+            # Round to even number for YUV420p
+            return default_center_x - (default_center_x % 2)
+
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         faces = self.face_cascade.detectMultiScale(
             gray,
@@ -53,17 +63,17 @@ class FaceEngine:
 
         if len(faces) == 0:
             logger.info("No face detected in sample frame. Using default center crop.")
-            return default_center_x
+            return default_center_x - (default_center_x % 2)
 
-        # Pick the largest face detected (assumed to be the speaker)
+        # Pick largest face
         faces = sorted(faces, key=lambda f: f[2] * f[3], reverse=True)
         fx, fy, fw, fh = faces[0]
         face_center_x = fx + (fw // 2)
 
-        # Center the square crop box on the face center
         crop_x = int(face_center_x - (square_dim / 2))
-        # Clamp bounds
         crop_x = max(0, min(crop_x, width - square_dim))
+        # Ensure crop_x is even number to prevent YUV420p chroma misalignments
+        crop_x = crop_x - (crop_x % 2)
 
         logger.info(f"Speaker face detected at x={face_center_x}. Dynamic crop_x set to {crop_x}")
         return crop_x
