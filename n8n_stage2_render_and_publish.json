@@ -34,7 +34,7 @@
     },
     {
       "parameters": {
-        "url": "={{ $env.RENDER_SERVICE_URL.replace(/\\/+$/, '') }}/health",
+        "url": "https://mtm-clipping.onrender.com/health",
         "options": {
           "timeout": 60000
         }
@@ -67,7 +67,7 @@
     },
     {
       "parameters": {
-        "url": "={{ $env.RENDER_SERVICE_URL.replace(/\\/+$/, '') }}/health",
+        "url": "https://mtm-clipping.onrender.com/health",
         "options": {
           "timeout": 30000
         }
@@ -134,12 +134,12 @@
         "operation": "read",
         "documentId": {
           "__rl": true,
-          "value": "={{ $env.GOOGLE_SHEET_ID || 'YOUR_GOOGLE_SHEET_ID_HERE' }}",
+          "value": "1R1q-WQHHwyfVkcgWbDdBXhGt89SI2O0O4-XImxuCbE8",
           "mode": "id"
         },
         "sheetName": {
           "__rl": true,
-          "value": "Clips_Queue",
+          "value": "Google_Sheet_Clips_Queue_Template",
           "mode": "name"
         },
         "filtersUI": {
@@ -162,7 +162,13 @@
         -1960,
         500
       ],
-      "alwaysOutputData": true
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "ew6mItBZu7P6dspU",
+          "name": "Google Sheets account 100 account"
+        }
+      }
     },
     {
       "parameters": {
@@ -224,7 +230,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.RENDER_SERVICE_URL.replace(/\\/+$/, '') }}/api/render-clip-async",
+        "url": "https://mtm-clipping.onrender.com/api/render-clip-async",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -234,7 +240,7 @@
             },
             {
               "name": "X-API-Key",
-              "value": "={{ $env.AL_HAQQ_API_SECRET_KEY }}"
+              "value": "al_haqq_sec_9971bc84ef1244a08b98e1"
             }
           ]
         },
@@ -270,13 +276,13 @@
     },
     {
       "parameters": {
-        "url": "={{ $env.RENDER_SERVICE_URL.replace(/\\/+$/, '') }}/api/job-status/{{ $json.clip_id }}",
+        "url": "=https://mtm-clipping.onrender.com/api/job-status/{{ $json.clip_id }}",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "X-API-Key",
-              "value": "={{ $env.AL_HAQQ_API_SECRET_KEY }}"
+              "value": "al_haqq_sec_9971bc84ef1244a08b98e1"
             }
           ]
         },
@@ -341,13 +347,13 @@
     },
     {
       "parameters": {
-        "url": "={{ $env.RENDER_SERVICE_URL.replace(/\\/+$/, '') }}{{ $json.download_url }}",
+        "url": "=https://mtm-clipping.onrender.com{{ $json.download_url }}",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "X-API-Key",
-              "value": "={{ $env.AL_HAQQ_API_SECRET_KEY }}"
+              "value": "al_haqq_sec_9971bc84ef1244a08b98e1"
             }
           ]
         },
@@ -400,12 +406,12 @@
         "operation": "update",
         "documentId": {
           "__rl": true,
-          "value": "={{ $env.GOOGLE_SHEET_ID }}",
+          "value": "1R1q-WQHHwyfVkcgWbDdBXhGt89SI2O0O4-XImxuCbE8",
           "mode": "id"
         },
         "sheetName": {
           "__rl": true,
-          "value": "Clips_Queue",
+          "value": "Google_Sheet_Clips_Queue_Template",
           "mode": "name"
         },
         "columns": {
@@ -428,7 +434,13 @@
       "position": [
         200,
         500
-      ]
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "ew6mItBZu7P6dspU",
+          "name": "Google Sheets account 100 account"
+        }
+      }
     },
     {
       "parameters": {
@@ -446,7 +458,13 @@
       "position": [
         440,
         500
-      ]
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "NFRtoAZzCQgOlUda",
+          "name": "html to imag bot render puptr"
+        }
+      }
     }
   ],
   "connections": {
