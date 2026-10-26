@@ -3,6 +3,7 @@ modules/youtube_engine.py
 Handles YouTube stream resolution, audio streaming, and robust 720p clip cutting with network reconnects.
 """
 
+import os
 import json
 import logging
 import subprocess
@@ -23,12 +24,41 @@ class YouTubeEngine:
         clean_url = canonical_youtube_url(video_url)
         logger.info(f"Resolving video info and stream for: {clean_url}")
         
+        # Check for cookies in Environment Variable (Secure) or local file
+        cookie_file = None
+        env_cookies = os.environ.get("YOUTUBE_COOKIES_TXT") or os.environ.get("YOUTUBE_COOKIES_BASE64")
+        if env_cookies:
+            try:
+                import tempfile
+                import base64
+                if not env_cookies.startswith("# Netscape"):
+                    cookie_content = base64.b64decode(env_cookies).decode("utf-8")
+                else:
+                    cookie_content = env_cookies
+                temp_cookie = Path(tempfile.gettempdir()) / "yt_runtime_cookies.txt"
+                temp_cookie.write_text(cookie_content, encoding="utf-8")
+                cookie_file = temp_cookie
+                logger.info("Using secure runtime cookies from environment variable")
+            except Exception as e:
+                logger.warning(f"Failed to parse cookies from env: {e}")
+        
+        if not cookie_file:
+            cookie_file = next((p for p in [
+                Path("cookies.txt"),
+                Path(__file__).parent.parent / "cookies.txt",
+                Path("/app/cookies.txt")
+            ] if p.exists() and p.stat().st_size > 50), None)
+
+        cookie_args = ["--cookies", str(cookie_file)] if cookie_file else ["--extractor-args", "youtube:player_client=android"]
+        logger.info(f"Using cookies: {cookie_file is not None} for stream resolution")
+
         # 1. Fetch metadata with --no-playlist
         meta_cmd = [
             "yt-dlp",
             "--ignore-config",
             "--js-runtimes", "node",
             "--no-playlist",
+            *cookie_args,
             "--dump-json",
             "--",
             clean_url
@@ -38,40 +68,51 @@ class YouTubeEngine:
             meta = json.loads(res.stdout)
         except Exception as e:
             logger.warning(f"Full JSON dump failed ({e}), falling back to basic metadata...")
-            basic_cmd = [
-                "yt-dlp",
-                "--ignore-config",
-                "--js-runtimes", "node",
-                "--no-playlist",
-                "--max-downloads", "1",
-                "--print", "%(id)s||%(title)s||%(duration)s",
-                "--",
-                clean_url
-            ]
-            basic_res = subprocess.run(basic_cmd, capture_output=True, text=True, timeout=40, check=True)
-            lines = [l for l in basic_res.stdout.strip().splitlines() if l.strip()]
-            last_line = lines[-1] if lines else ""
-            parts = last_line.split("||")
-            dur = 3600.0
-            if len(parts) >= 3:
-                v_id = parts[0]
-                v_title = "||".join(parts[1:-1])
-                try:
-                    dur = float(parts[-1])
-                except (ValueError, TypeError):
-                    dur = 3600.0
-            elif len(parts) == 2:
-                v_id = parts[0]
-                v_title = parts[1]
-            else:
-                v_id = parts[0] if parts else "unknown"
-                v_title = "Mufti Tariq Masood Bayan"
+            try:
+                basic_cmd = [
+                    "yt-dlp",
+                    "--ignore-config",
+                    "--js-runtimes", "node",
+                    "--no-playlist",
+                    "--max-downloads", "1",
+                    *cookie_args,
+                    "--print", "%(id)s||%(title)s||%(duration)s",
+                    "--",
+                    clean_url
+                ]
+                basic_res = subprocess.run(basic_cmd, capture_output=True, text=True, timeout=40, check=True)
+                lines = [l for l in basic_res.stdout.strip().splitlines() if l.strip()]
+                last_line = lines[-1] if lines else ""
+                parts = last_line.split("||")
+                dur = 3600.0
+                if len(parts) >= 3:
+                    v_id = parts[0]
+                    v_title = "||".join(parts[1:-1])
+                    try:
+                        dur = float(parts[-1])
+                    except (ValueError, TypeError):
+                        dur = 3600.0
+                elif len(parts) == 2:
+                    v_id = parts[0]
+                    v_title = parts[1]
+                else:
+                    v_id = parts[0] if parts else "unknown"
+                    v_title = "Mufti Tariq Masood Bayan"
 
-            meta = {
-                "id": v_id,
-                "title": v_title if v_title else "Mufti Tariq Masood Bayan",
-                "duration": dur
-            }
+                meta = {
+                    "id": v_id,
+                    "title": v_title if v_title else "Mufti Tariq Masood Bayan",
+                    "duration": dur
+                }
+            except Exception as basic_err:
+                logger.warning(f"Basic metadata probe failed ({basic_err}), falling back to video ID from URL")
+                from modules.safe_url import extract_video_id
+                v_id = extract_video_id(clean_url)
+                meta = {
+                    "id": v_id,
+                    "title": "Mufti Tariq Masood Bayan",
+                    "duration": 3600.0
+                }
 
         # 2. Fetch direct stream URL (prioritize 720p adaptive stream, fallback 22, then 18)
         stream_cmd = [
@@ -79,16 +120,34 @@ class YouTubeEngine:
             "--ignore-config",
             "--js-runtimes", "node",
             "--no-playlist",
-            "--extractor-args", "youtube:player_client=android",
+            *cookie_args,
             "-f", "bestvideo[height<=720]+bestaudio/best[height<=720]/22/18/best",
             "-g",
             "--",
             clean_url
         ]
-        stream_res = subprocess.run(stream_cmd, capture_output=True, text=True, timeout=60, check=True)
-        lines = [line.strip() for line in stream_res.stdout.strip().splitlines() if line.strip().startswith("http")]
-        video_stream = lines[0] if lines else ""
-        audio_stream = lines[1] if len(lines) > 1 else ""
+        try:
+            stream_res = subprocess.run(stream_cmd, capture_output=True, text=True, timeout=60, check=True)
+            lines = [line.strip() for line in stream_res.stdout.strip().splitlines() if line.strip().startswith("http")]
+            video_stream = lines[0] if lines else ""
+            audio_stream = lines[1] if len(lines) > 1 else ""
+        except Exception as stream_err:
+            logger.warning(f"720p stream resolution failed ({stream_err}), trying fallback audio/video stream...")
+            fallback_cmd = [
+                "yt-dlp",
+                "--ignore-config",
+                "--js-runtimes", "node",
+                "--no-playlist",
+                *cookie_args,
+                "-f", "ba/b",
+                "-g",
+                "--",
+                clean_url
+            ]
+            fb_res = subprocess.run(fallback_cmd, capture_output=True, text=True, timeout=60, check=True)
+            lines = [line.strip() for line in fb_res.stdout.strip().splitlines() if line.strip().startswith("http")]
+            video_stream = lines[0] if lines else ""
+            audio_stream = lines[0] if lines else ""
 
         raw_dur = meta.get("duration")
         try:

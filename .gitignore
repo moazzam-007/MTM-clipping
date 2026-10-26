@@ -2,6 +2,8 @@
 .env
 .env.local
 *.env
+cookies.txt
+*.cookies
 
 # Python
 __pycache__/
