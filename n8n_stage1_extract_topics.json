@@ -1,5 +1,4 @@
 {
-  "name": "Al Haqq - Stage 1: Topic Extraction & Sheet Population",
   "nodes": [
     {
       "parameters": {
@@ -8,13 +7,13 @@
         ],
         "additionalFields": {}
       },
-      "id": "node-tg-trigger",
+      "id": "f49669ec-621b-4652-93be-cc47ee4949b7",
       "name": "⚡ Telegram - On /q Command",
       "type": "n8n-nodes-base.telegramTrigger",
       "typeVersion": 1.1,
       "position": [
-        2144,
-        80
+        -80,
+        224
       ],
       "webhookId": "8387140a-0ba5-4190-bd68-6801e812f938",
       "credentials": {
@@ -28,13 +27,13 @@
       "parameters": {
         "jsCode": "// Parse Telegram message, enforce admin security, and validate YouTube URL\nconst item = $input.first().json;\nconst message = item.message || item.edited_message || {};\nconst text = String(message.text || '').trim();\nconst chatId = String((message.chat && message.chat.id) || (message.from && message.from.id) || '');\n\n// Security: Only Moazzam (Admin Chat ID: 1306188611) can interact with this bot\nconst ADMIN_CHAT_ID = \"1306188611\";\nif (chatId !== ADMIN_CHAT_ID) {\n  return [{\n    json: {\n      action: \"unauthorized\",\n      user_chat_id: chatId,\n      reply_text: \"⛔ <b>Access Denied:</b> Aap is automation bot ko use karne ke liye authorized nahi hain.\"\n    }\n  }];\n}\n\n// Check for YouTube URL (supports /q <url> or direct link)\nconst urlMatch = text.match(/https?:\\/\\/(?:www\\.)?(?:youtube\\.com\\/(?:watch\\?v=|embed\\/|shorts\\/)|youtu\\.be\\/)([a-zA-Z0-9_-]{11})/i);\n\nif (!urlMatch) {\n  return [{\n    json: {\n      action: \"invalid_format\",\n      user_chat_id: chatId,\n      reply_text: \"⚠️ <b>Format Sahi Nahi Hai!</b>\\n\\nYouTube Bayan add karne ke liye is tarah link bhejiye:\\n👉 <code>/q https://youtu.be/VIDEO_ID</code>\\n<i>(Ya direct YouTube link paste karein).</i>\"\n    }\n  }];\n}\n\nconst videoId = urlMatch[1];\nconst canonicalUrl = `https://youtu.be/${videoId}`;\n\nreturn [{\n  json: {\n    action: \"queue\",\n    video_id: videoId,\n    video_url: canonicalUrl,\n    user_chat_id: chatId,\n    raw_text: text,\n    date_added: new Date().toISOString()\n  }\n}];"
       },
-      "id": "node-tg-parse-url",
+      "id": "589f873a-293d-4120-9218-0df6b1269b4a",
       "name": "🔍 Parse & Validate /q URL",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2384,
-        80
+        144,
+        224
       ]
     },
     {
@@ -61,13 +60,13 @@
         },
         "options": {}
       },
-      "id": "node-tg-if-valid-url",
+      "id": "6e344cb8-84c2-4f18-9650-6cacb9a0ee2f",
       "name": "❓ Is Valid Video URL?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        2624,
-        80
+        368,
+        224
       ]
     },
     {
@@ -79,14 +78,15 @@
           "parse_mode": "HTML"
         }
       },
-      "id": "node-tg-reply-error",
+      "id": "77723f8f-e7ce-4957-afcb-d063766eff3d",
       "name": "📨 Telegram - Help / Error Reply",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        2864,
-        200
+        592,
+        320
       ],
+      "webhookId": "6b0c2fc7-0a08-44ce-ae38-e68921bf32ec",
       "credentials": {
         "telegramApi": {
           "id": "NFRtoAZzCQgOlUda",
@@ -104,7 +104,7 @@
         },
         "sheetName": {
           "__rl": true,
-          "value": "Video_Sources_Queue",
+          "value": "Google_Sheet_Video_Sources_Queue_Template",
           "mode": "name"
         },
         "columns": {
@@ -115,17 +115,76 @@
             "Video_URL": "={{ $json.video_url }}",
             "Status": "pending",
             "Added_By": "={{ $json.user_chat_id }}"
-          }
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Date",
+              "displayName": "Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Video_ID",
+              "displayName": "Video_ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Video_URL",
+              "displayName": "Video_URL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Added_By",
+              "displayName": "Added_By",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Processed_Date",
+              "displayName": "Processed_Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
         },
         "options": {}
       },
-      "id": "node-tg-append-source",
+      "id": "759086c5-7b77-4028-91c8-0856ec90bf84",
       "name": "📥 Add URL to Sources Queue Sheet",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
       "position": [
-        2864,
-        -40
+        592,
+        128
       ],
       "credentials": {
         "googleSheetsOAuth2Api": {
@@ -143,14 +202,15 @@
           "parse_mode": "HTML"
         }
       },
-      "id": "node-tg-reply-confirm",
+      "id": "f14e71ae-cd85-4e66-a2fb-a3b151a73841",
       "name": "📨 Telegram - URL Queued Confirmation",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        3104,
-        -40
+        816,
+        128
       ],
+      "webhookId": "33686e23-1ca4-4aba-8118-3e7322060d34",
       "credentials": {
         "telegramApi": {
           "id": "NFRtoAZzCQgOlUda",
@@ -169,29 +229,28 @@
           ]
         }
       },
-      "id": "2698e581-9291-48ce-b804-9c3156c223e1",
+      "id": "579fafa4-9754-4ea4-acce-3893b42eb8d6",
       "name": "⏰ Daily Schedule (10:00 PM IST)",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [
-        2144,
-        480
+        -80,
+        544
       ]
     },
     {
       "parameters": {},
-      "id": "728f44ff-e4e9-49a0-911c-c4937c2ed6c0",
+      "id": "44d027ab-0754-4e4d-8255-fcc7818194ce",
       "name": "▶️ Manual Test Trigger",
       "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
       "position": [
-        2144,
-        660
+        -80,
+        736
       ]
     },
     {
       "parameters": {
-        "operation": "read",
         "documentId": {
           "__rl": true,
           "value": "1R1q-WQHHwyfVkcgWbDdBXhGt89SI2O0O4-XImxuCbE8",
@@ -199,18 +258,18 @@
         },
         "sheetName": {
           "__rl": true,
-          "value": "Video_Sources_Queue",
+          "value": "Google_Sheet_Video_Sources_Queue_Template",
           "mode": "name"
         },
         "options": {}
       },
-      "id": "node-read-sources-queue",
+      "id": "f472532d-587d-43b8-8f0c-d2d868ba6879",
       "name": "📊 Read Pending Videos from Queue",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
       "position": [
-        2384,
-        560
+        144,
+        640
       ],
       "alwaysOutputData": true,
       "credentials": {
@@ -224,13 +283,13 @@
       "parameters": {
         "jsCode": "// Filter pending videos and select 1 video to process\nconst allRows = $input.all().map(i => i.json || {});\nconst pendingItems = allRows.filter(r => String(r.Status || '').toLowerCase().trim() === 'pending');\n\nif (pendingItems.length === 0) {\n  return [{\n    json: {\n      has_pending: false,\n      total_pending: 0\n    }\n  }];\n}\n\nconst selected = pendingItems[0];\nreturn [{\n  json: {\n    ...selected,\n    has_pending: true,\n    total_pending: pendingItems.length,\n    video_id: String(selected.Video_ID || selected.video_id || '').trim(),\n    video_url: String(selected.Video_URL || selected.video_url || '').trim()\n  }\n}];"
       },
-      "id": "node-pick-pending-video",
+      "id": "9adaa544-b0a3-433f-910e-bfd881e3fead",
       "name": "🎯 Select 1 Video to Process",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2624,
-        560
+        368,
+        640
       ]
     },
     {
@@ -257,13 +316,13 @@
         },
         "options": {}
       },
-      "id": "node-if-has-pending",
+      "id": "a9a28cb2-13f8-4816-8148-09570e229cd6",
       "name": "❓ Any Pending Video in Queue?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        2864,
-        560
+        592,
+        640
       ]
     },
     {
@@ -275,14 +334,15 @@
           "parse_mode": "HTML"
         }
       },
-      "id": "node-low-stock-alert",
+      "id": "4c2baba5-051f-42cc-8e48-a83813dde01f",
       "name": "⚠️ Telegram - Low Stock Alert",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        3104,
-        720
+        816,
+        736
       ],
+      "webhookId": "cda61a5f-f0d8-476f-9e2a-92b0930da2fb",
       "credentials": {
         "telegramApi": {
           "id": "NFRtoAZzCQgOlUda",
@@ -297,13 +357,13 @@
           "timeout": 45000
         }
       },
-      "id": "dd48c19a-a4a7-4e8a-b839-6eb305153891",
+      "id": "4ee4d017-a140-454d-b002-154a02ad0145",
       "name": "🔔 Wake Render Engine (GET /health)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        3104,
-        480
+        816,
+        544
       ],
       "retryOnFail": true,
       "maxTries": 6,
@@ -334,13 +394,13 @@
           "timeout": 600000
         }
       },
-      "id": "48c62a78-cefe-4c73-863f-82b73ca6a2fe",
+      "id": "7fc5b6dd-9376-4b82-8a9e-866429abc17e",
       "name": "🧠 Call AI Topic Extraction API",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        3344,
-        480
+        1040,
+        544
       ]
     },
     {
@@ -348,26 +408,26 @@
         "fieldToSplitOut": "topics",
         "options": {}
       },
-      "id": "0cf8736b-8bc3-428d-be82-76ffe340770b",
+      "id": "35afba2b-77c2-4950-886b-4fdced422f96",
       "name": "🔀 Split Topics Array",
       "type": "n8n-nodes-base.itemLists",
       "typeVersion": 3,
       "position": [
-        3584,
-        480
+        1264,
+        544
       ]
     },
     {
       "parameters": {
         "jsCode": "// Validate extracted clip boundaries and metadata\nconst validItems = [];\n\nfor (const item of $input.all()) {\n  const t = item.json || {};\n  const start = Number(t.start_time);\n  const end = Number(t.end_time);\n  const hook = String(t.roman_urdu_hook || '').trim();\n  const title = String(t.yt_title || '').trim();\n  \n  // Check finite numbers, start < end, duration between 35s and 360s\n  if (Number.isFinite(start) && Number.isFinite(end) && end > start) {\n    const dur = end - start;\n    if (dur >= 35 && dur <= 360 && hook.length > 5 && title.length > 5) {\n      validItems.push({\n        json: {\n          ...t,\n          video_id: t.video_id || '',\n          video_url: t.video_url || '',\n          lecture_title: t.lecture_title || '',\n          start_time: start,\n          end_time: end,\n          duration_sec: parseFloat(dur.toFixed(1)),\n          roman_urdu_hook: hook,\n          yt_title: title\n        }\n      });\n    }\n  }\n}\n\nif (validItems.length === 0) {\n  throw new Error(\"No valid topics passed validation criteria!\");\n}\n\nreturn validItems;"
       },
-      "id": "9eb2219e-0d91-4873-901a-31ea9bab1d7f",
+      "id": "ffc4c935-82e2-4deb-b2c2-b2bf62f76a78",
       "name": "🛡️ Validate Clip Boundaries & Metadata",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3824,
-        480
+        1488,
+        544
       ]
     },
     {
@@ -410,13 +470,13 @@
         },
         "options": {}
       },
-      "id": "c713d1c7-eefb-413f-b56b-690658c8ad71",
+      "id": "de196cfd-24ed-4d05-a205-1a67069c94dd",
       "name": "📥 Append Topics to Google Sheet",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
       "position": [
-        4064,
-        480
+        1712,
+        544
       ],
       "credentials": {
         "googleSheetsOAuth2Api": {
@@ -435,7 +495,7 @@
         },
         "sheetName": {
           "__rl": true,
-          "value": "Video_Sources_Queue",
+          "value": "Google_Sheet_Video_Sources_Queue_Template",
           "mode": "name"
         },
         "columns": {
@@ -450,13 +510,13 @@
         },
         "options": {}
       },
-      "id": "node-mark-source-processed",
+      "id": "d0c63a63-fd7c-4b12-a358-32d6ca3e0231",
       "name": "✅ Mark Source Video as Processed",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
       "position": [
-        4304,
-        480
+        1936,
+        544
       ],
       "credentials": {
         "googleSheetsOAuth2Api": {
@@ -474,15 +534,16 @@
           "parse_mode": "HTML"
         }
       },
-      "id": "3e89ea29-4920-4062-a4ac-aca9c4fb1200",
+      "id": "af46531d-a571-4716-bf0e-4f527372d0de",
       "name": "📨 Telegram - Stage 1 Success Alert",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        4544,
-        480
+        2160,
+        544
       ],
       "executeOnce": true,
+      "webhookId": "f341c370-3618-4ec8-8c37-306d130fdc04",
       "credentials": {
         "telegramApi": {
           "id": "NFRtoAZzCQgOlUda",
