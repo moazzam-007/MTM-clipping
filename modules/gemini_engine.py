@@ -100,18 +100,18 @@ class GeminiEngine:
         prompt = GEMINI_PROMPT_TEMPLATE.replace("{{MAX_CLIPS}}", str(max_clips)).replace("{{TRANSCRIPT_CONTEXT}}", transcript_context)
 
         raw_text = None
-        # 1. Try modern google-genai SDK with thinking_budget=1024 and JSON mode
+        # 1. Try modern google-genai SDK with stable models and temperature 0.3
         try:
             from google import genai as modern_genai
             from google.genai import types as genai_types
             if self.api_key:
                 client = modern_genai.Client(api_key=self.api_key)
-                for model_name in [self.primary_model, "gemini-2.0-flash", "gemini-2.0-flash-lite"]:
+                for model_name in [self.primary_model, "gemini-2.5-flash-lite", "gemini-1.5-flash", "gemini-2.0-flash"]:
                     try:
-                        logger.info(f"Calling Google GenAI ({model_name}) with thinking_budget=1024...")
+                        logger.info(f"Calling Google GenAI ({model_name}) with temperature=0.3...")
                         config_obj = genai_types.GenerateContentConfig(
                             response_mime_type="application/json",
-                            thinking_config=genai_types.ThinkingConfig(thinking_budget=1024)
+                            temperature=0.3
                         )
                         res = client.models.generate_content(
                             model=model_name,
@@ -119,56 +119,28 @@ class GeminiEngine:
                             config=config_obj
                         )
                         raw_text = res.text.strip()
-                        logger.info(f"Successfully generated topics with {model_name} (thinking_budget=1024)!")
+                        logger.info(f"Successfully generated topics with {model_name}!")
                         break
                     except Exception as m_err:
-                        # Fallback without thinking_config if model variant doesn't support thinking
-                        try:
-                            logger.info(f"Retrying {model_name} without thinking_config...")
-                            config_obj = genai_types.GenerateContentConfig(response_mime_type="application/json")
-                            res = client.models.generate_content(
-                                model=model_name,
-                                contents=prompt,
-                                config=config_obj
-                            )
-                            raw_text = res.text.strip()
-                            logger.info(f"Successfully generated topics with {model_name} (standard mode)!")
-                            break
-                        except Exception as inner_err:
-                            logger.warning(f"Model {model_name} failed: {inner_err}")
+                        logger.warning(f"Model {model_name} failed: {m_err}. Trying next...")
         except Exception as sdk_err:
             logger.warning(f"Modern google-genai SDK failed: {sdk_err}")
 
-        # 2. Try legacy google.generativeai (lazy loaded to save memory)
-        if not raw_text and self.api_key:
-            try:
-                import google.generativeai as genai
-                genai.configure(api_key=self.api_key)
-                for model_name in [self.primary_model, "gemini-2.0-flash", "gemini-2.0-flash-lite"]:
-                    try:
-                        logger.info(f"Calling legacy Gemini ({model_name}) with JSON mode...")
-                        model = genai.GenerativeModel(
-                            model_name,
-                            generation_config={"response_mime_type": "application/json"}
-                        )
-                        res = model.generate_content(prompt)
-                        raw_text = res.text.strip()
-                        logger.info(f"Successfully generated topics with legacy {model_name}!")
-                        break
-                    except Exception as e:
-                        logger.warning(f"{model_name} failed: {e}. Retrying next model...")
-                        time.sleep(1)
-            except Exception as legacy_err:
-                logger.warning(f"Legacy genai failed: {legacy_err}")
-
-        # 3. Fallback to Groq LLM
+        # 2. Fallback to Groq LLM (with safe prompt truncation to prevent 12k TPM rate-limiting)
         if not raw_text and self.groq_api_key:
             logger.info(f"Falling back to Groq LLM ({self.groq_fallback_llm})...")
             try:
+                groq_prompt = prompt
+                # Truncate transcript context if prompt exceeds 10k tokens (~35k chars) for Groq free tier
+                if len(groq_prompt) > 35000:
+                    logger.info("Truncating transcript context for Groq TPM guard...")
+                    groq_prompt = GEMINI_PROMPT_TEMPLATE.replace("{{MAX_CLIPS}}", str(max_clips)).replace("{{TRANSCRIPT_CONTEXT}}", transcript_context[:32000])
+
                 groq_client = Groq(api_key=self.groq_api_key)
                 completion = groq_client.chat.completions.create(
-                    messages=[{"role": "user", "content": prompt}],
+                    messages=[{"role": "user", "content": groq_prompt}],
                     model=self.groq_fallback_llm,
+                    temperature=0.3,
                     response_format={"type": "json_object"}
                 )
                 raw_text = completion.choices[0].message.content.strip()
@@ -182,26 +154,31 @@ class GeminiEngine:
         # Safe and robust JSON extraction (handles code fences, truncated buffers, and object wrappers)
         clips_raw = self._safe_parse_json(raw_text)
 
-        # Helper to snap timestamps to nearest Whisper segment boundary (preventing cut-off speech)
-        def _snap_to_boundary(target_sec: float, is_start_boundary: bool, tol: float = 3.5) -> float:
-            if not segments:
-                return target_sec
-            b_key = "start" if is_start_boundary else "end"
-            best_time = target_sec
-            min_dist = float("inf")
-            for seg in segments:
-                t_val = float(seg.get(b_key, 0.0)) + offset_sec
-                dist = abs(t_val - target_sec)
-                if dist < min_dist:
-                    min_dist = dist
-                    best_time = t_val
-            if min_dist <= tol:
-                return round(best_time, 1)
-            return round(target_sec, 1)
+        # Directional boundary snapping: start snaps at or slightly before target (within 6s), end snaps at or slightly after target (within 6s)
+        starts = sorted(float(s.get("start", 0.0)) + offset_sec for s in segments) if segments else []
+        ends = sorted(float(s.get("end", 0.0)) + offset_sec for s in segments) if segments else []
+
+        def _snap_start(t: float, max_back: float = 6.0) -> float:
+            if not starts:
+                return round(t, 1)
+            c = [x for x in starts if x <= t + 0.2]
+            if c and (t - max(c)) <= max_back:
+                return round(max(c), 1)
+            return round(t, 1)
+
+        def _snap_end(t: float, max_fwd: float = 6.0) -> float:
+            if not ends:
+                return round(t, 1)
+            c = [x for x in ends if x >= t - 0.2]
+            if c and (min(c) - t) <= max_fwd:
+                return round(min(c), 1)
+            return round(t, 1)
 
         # Post-validate, sanitize, snap to Whisper boundaries, apply audio padding, and enforce YouTube SEO tags
         valid_clips = []
         for c in clips_raw:
+            if not isinstance(c, dict):
+                continue
             try:
                 raw_s = float(c.get("start_time", 0))
                 raw_e = float(c.get("end_time", 0))
@@ -209,9 +186,9 @@ class GeminiEngine:
                 if raw_s < 0 or raw_e <= raw_s:
                     continue
 
-                # Snap boundaries to nearest Whisper sentence/phrase
-                snapped_s = _snap_to_boundary(raw_s, is_start_boundary=True)
-                snapped_e = _snap_to_boundary(raw_e, is_start_boundary=False)
+                # Directional boundary snap: guarantees sentences are not cut off midway
+                snapped_s = _snap_start(raw_s)
+                snapped_e = _snap_end(raw_e)
                 
                 # Audio padding: 0.3s start lead-in and 0.5s end tail for seamless audio
                 padded_start = max(0.0, round(snapped_s - 0.3, 1))
@@ -223,8 +200,8 @@ class GeminiEngine:
                     core_dur = snapped_e - snapped_s
                     cat = "shorts" if core_dur <= config.SHORTS_MAX_DURATION else "mini_long"
                     
-                    # Enforce strict YouTube algorithm rule for #Shorts tag
-                    yt_title = str(c.get("yt_title", "")).strip()[:100]
+                    # Enforce strict YouTube algorithm rule for #Shorts tag without truncation
+                    yt_title = str(c.get("yt_title", "")).strip()
                     raw_tags = c.get("tags", [])
                     if isinstance(raw_tags, list):
                         tags = [str(t).strip() for t in raw_tags if str(t).strip()]
@@ -233,7 +210,9 @@ class GeminiEngine:
 
                     if cat == "shorts":
                         if "#Shorts" not in yt_title and "#shorts" not in yt_title.lower():
-                            yt_title = f"{yt_title} #Shorts"[:100].strip()
+                            yt_title = f"{yt_title[:90].strip()} #Shorts"
+                        else:
+                            yt_title = yt_title[:100]
                         if "#Shorts" not in tags and "#shorts" not in [t.lower() for t in tags]:
                             tags.insert(0, "#Shorts")
                     else:

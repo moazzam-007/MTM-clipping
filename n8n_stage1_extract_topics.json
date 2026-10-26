@@ -7,13 +7,13 @@
         ],
         "additionalFields": {}
       },
-      "id": "72e7f5dc-bb71-4706-851d-f24ed0d897e3",
+      "id": "5778a712-be9b-4726-9fb1-363403d50a60",
       "name": "⚡ Telegram - On /q Command",
       "type": "n8n-nodes-base.telegramTrigger",
       "typeVersion": 1.1,
       "position": [
-        -304,
-        672
+        -1072,
+        128
       ],
       "webhookId": "8387140a-0ba5-4190-bd68-6801e812f938",
       "credentials": {
@@ -27,13 +27,13 @@
       "parameters": {
         "jsCode": "// Parse Telegram message, enforce admin security, and validate YouTube URL\nconst item = $input.first().json;\nconst message = item.message || item.edited_message || {};\nconst text = String(message.text || '').trim();\nconst chatId = String((message.chat && message.chat.id) || (message.from && message.from.id) || '');\n\n// Security: Only Moazzam (Admin Chat ID: 1306188611) can interact with this bot\nconst ADMIN_CHAT_ID = \"1306188611\";\nif (chatId !== ADMIN_CHAT_ID) {\n  return [{\n    json: {\n      action: \"unauthorized\",\n      user_chat_id: chatId,\n      reply_text: \"⛔ <b>Access Denied:</b> Aap is automation bot ko use karne ke liye authorized nahi hain.\"\n    }\n  }];\n}\n\n// Check for YouTube URL (supports /q <url> or direct link)\nconst urlMatch = text.match(/https?:\\/\\/(?:www\\.)?(?:youtube\\.com\\/(?:watch\\?v=|embed\\/|shorts\\/)|youtu\\.be\\/)([a-zA-Z0-9_-]{11})/i);\n\nif (!urlMatch) {\n  return [{\n    json: {\n      action: \"invalid_format\",\n      user_chat_id: chatId,\n      reply_text: \"⚠️ <b>Format Sahi Nahi Hai!</b>\\n\\nYouTube Bayan add karne ke liye is tarah link bhejiye:\\n👉 <code>/q https://youtu.be/VIDEO_ID</code>\\n<i>(Ya direct YouTube link paste karein).</i>\"\n    }\n  }];\n}\n\nconst videoId = urlMatch[1];\nconst canonicalUrl = `https://youtu.be/${videoId}`;\n\nreturn [{\n  json: {\n    action: \"queue\",\n    video_id: videoId,\n    video_url: canonicalUrl,\n    user_chat_id: chatId,\n    raw_text: text,\n    date_added: new Date().toISOString()\n  }\n}];"
       },
-      "id": "bfd13beb-abda-47e3-a657-d3e3e5e8a023",
+      "id": "1c4cfe31-d826-494d-80dc-ebafc9edeeda",
       "name": "🔍 Parse & Validate /q URL",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -80,
-        672
+        -848,
+        128
       ]
     },
     {
@@ -60,13 +60,13 @@
         },
         "options": {}
       },
-      "id": "981f45d2-df32-470c-99e5-ac64b866a296",
+      "id": "b40eb77d-babd-4b89-84d5-e975d571bd01",
       "name": "❓ Is Valid Video URL?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        144,
-        672
+        -624,
+        128
       ]
     },
     {
@@ -78,13 +78,13 @@
           "parse_mode": "HTML"
         }
       },
-      "id": "69cdb0cf-7993-483a-bf2f-6af7a2fb797c",
+      "id": "53d14fb7-eb63-4560-89b2-9f4e59e0d0fd",
       "name": "📨 Telegram - Help / Error Reply",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        368,
-        768
+        -400,
+        224
       ],
       "webhookId": "6b0c2fc7-0a08-44ce-ae38-e68921bf32ec",
       "credentials": {
@@ -99,13 +99,17 @@
         "operation": "append",
         "documentId": {
           "__rl": true,
-          "value": "1R1q-WQHHwyfVkcgWbDdBXhGt89SI2O0O4-XImxuCbE8",
-          "mode": "id"
+          "value": "1dZw3LWuXrhyqtXSHMqWzot-Jzk4JqjjRuSDodzXBGyc",
+          "mode": "list",
+          "cachedResultName": "Al_Haqq_Video_Sources_Queue",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1dZw3LWuXrhyqtXSHMqWzot-Jzk4JqjjRuSDodzXBGyc/edit?usp=drivesdk"
         },
         "sheetName": {
           "__rl": true,
-          "value": "Google_Sheet_Video_Sources_Queue_Template",
-          "mode": "name"
+          "value": 1157530755,
+          "mode": "list",
+          "cachedResultName": "Al_Haqq_Video_Sources_Queue",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1dZw3LWuXrhyqtXSHMqWzot-Jzk4JqjjRuSDodzXBGyc/edit#gid=1157530755"
         },
         "columns": {
           "mappingMode": "defineBelow",
@@ -161,7 +165,8 @@
               "defaultMatch": false,
               "display": true,
               "type": "string",
-              "canBeUsedToMatch": true
+              "canBeUsedToMatch": true,
+              "removed": false
             },
             {
               "id": "Processed_Date",
@@ -170,19 +175,22 @@
               "defaultMatch": false,
               "display": true,
               "type": "string",
-              "canBeUsedToMatch": true
+              "canBeUsedToMatch": true,
+              "removed": false
             }
-          ]
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
         },
         "options": {}
       },
-      "id": "4abe4dfe-9d32-4bd7-a007-584fcfc6c108",
+      "id": "b60c7f65-eccf-493b-974c-0c117521fbee",
       "name": "📥 Add URL to Sources Queue Sheet",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
       "position": [
-        368,
-        576
+        -400,
+        32
       ],
       "credentials": {
         "googleSheetsOAuth2Api": {
@@ -200,13 +208,13 @@
           "parse_mode": "HTML"
         }
       },
-      "id": "917c1e87-12a6-4688-9537-778e78f929e8",
+      "id": "a233bb35-be34-41ba-9460-7fa2dd5d5c7b",
       "name": "📨 Telegram - URL Queued Confirmation",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        592,
-        576
+        -176,
+        32
       ],
       "webhookId": "33686e23-1ca4-4aba-8118-3e7322060d34",
       "credentials": {
@@ -227,47 +235,51 @@
           ]
         }
       },
-      "id": "2b88f29e-d654-4cbb-849c-d0e0c909ee84",
+      "id": "31c7f88b-55bc-4e97-9373-a558718078d0",
       "name": "⏰ Daily Schedule (10:00 PM IST)",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [
-        -304,
-        992
+        -1072,
+        448
       ]
     },
     {
       "parameters": {},
-      "id": "a925d2ce-515a-4b23-ae7e-d079967dbfe6",
+      "id": "ec4645ed-5e7a-45c9-8d63-6babe1eab3d5",
       "name": "▶️ Manual Test Trigger",
       "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
       "position": [
-        -304,
-        1184
+        -1072,
+        640
       ]
     },
     {
       "parameters": {
         "documentId": {
           "__rl": true,
-          "value": "1R1q-WQHHwyfVkcgWbDdBXhGt89SI2O0O4-XImxuCbE8",
-          "mode": "id"
+          "value": "1dZw3LWuXrhyqtXSHMqWzot-Jzk4JqjjRuSDodzXBGyc",
+          "mode": "list",
+          "cachedResultName": "Al_Haqq_Video_Sources_Queue",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1dZw3LWuXrhyqtXSHMqWzot-Jzk4JqjjRuSDodzXBGyc/edit?usp=drivesdk"
         },
         "sheetName": {
           "__rl": true,
-          "value": "Google_Sheet_Video_Sources_Queue_Template",
-          "mode": "name"
+          "value": 1157530755,
+          "mode": "list",
+          "cachedResultName": "Al_Haqq_Video_Sources_Queue",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1dZw3LWuXrhyqtXSHMqWzot-Jzk4JqjjRuSDodzXBGyc/edit#gid=1157530755"
         },
         "options": {}
       },
-      "id": "d1f1afe7-a7fc-461c-9840-d04218c4b5dc",
+      "id": "ff164d75-cd05-42dd-adf8-4465d973df27",
       "name": "📊 Read Pending Videos from Queue",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
       "position": [
-        -80,
-        1088
+        -848,
+        544
       ],
       "alwaysOutputData": true,
       "credentials": {
@@ -281,13 +293,13 @@
       "parameters": {
         "jsCode": "// Filter pending videos and select 1 video to process\nconst allRows = $input.all().map(i => i.json || {});\nconst pendingItems = allRows.filter(r => String(r.Status || '').toLowerCase().trim() === 'pending');\n\nif (pendingItems.length === 0) {\n  return [{\n    json: {\n      has_pending: false,\n      total_pending: 0\n    }\n  }];\n}\n\nconst selected = pendingItems[0];\nreturn [{\n  json: {\n    ...selected,\n    has_pending: true,\n    total_pending: pendingItems.length,\n    video_id: String(selected.Video_ID || selected.video_id || '').trim(),\n    video_url: String(selected.Video_URL || selected.video_url || '').trim()\n  }\n}];"
       },
-      "id": "7c42c684-fd59-4ccc-a68c-2a6ea9af598c",
+      "id": "0098831f-aa7b-4861-a99d-ce734614fb15",
       "name": "🎯 Select 1 Video to Process",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        144,
-        1088
+        -624,
+        544
       ]
     },
     {
@@ -314,13 +326,13 @@
         },
         "options": {}
       },
-      "id": "5ed87183-a9c2-4f15-b79e-b853a6ab5ea7",
+      "id": "b80228db-f73f-471f-bf74-68e435605251",
       "name": "❓ Any Pending Video in Queue?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        368,
-        1088
+        -400,
+        544
       ]
     },
     {
@@ -332,13 +344,13 @@
           "parse_mode": "HTML"
         }
       },
-      "id": "d0e946b0-e668-4d32-9809-306b6924b9cb",
+      "id": "a8166f57-f177-4347-9e06-4948792e74cc",
       "name": "⚠️ Telegram - Low Stock Alert",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        592,
-        1184
+        -176,
+        640
       ],
       "webhookId": "cda61a5f-f0d8-476f-9e2a-92b0930da2fb",
       "credentials": {
@@ -355,13 +367,13 @@
           "timeout": 45000
         }
       },
-      "id": "f9965428-cb89-4693-8121-80c7b37710a1",
+      "id": "16e56563-28ea-419d-9f81-146b5361d9a4",
       "name": "🔔 Wake Render Engine (GET /health)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        592,
-        992
+        -176,
+        448
       ],
       "retryOnFail": true,
       "maxTries": 6,
@@ -387,18 +399,18 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"url\": {{ JSON.stringify($json.video_url) }},\n  \"max_clips\": 8,\n  \"max_duration_sec\": 7200\n}",
+        "jsonBody": "={\n  \"url\": {{ JSON.stringify($('🎯 Select 1 Video to Process').item.json.video_url || $json.video_url) }},\n  \"max_clips\": 8,\n  \"max_duration_sec\": 7200\n}",
         "options": {
           "timeout": 600000
         }
       },
-      "id": "3f13036d-7d78-4f17-bf73-4b79810b6904",
+      "id": "db02c16b-3eb5-4e80-9b92-c7dff43ae5c6",
       "name": "🧠 Call AI Topic Extraction API",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        816,
-        992
+        48,
+        448
       ]
     },
     {
@@ -406,26 +418,26 @@
         "fieldToSplitOut": "topics",
         "options": {}
       },
-      "id": "bfa07679-27c5-4981-90d9-36db94288bf0",
+      "id": "f4c4f72e-a2b5-451b-850c-afdd74a14731",
       "name": "🔀 Split Topics Array",
       "type": "n8n-nodes-base.itemLists",
       "typeVersion": 3,
       "position": [
-        1040,
-        992
+        272,
+        448
       ]
     },
     {
       "parameters": {
         "jsCode": "// Validate extracted clip boundaries and metadata\nconst validItems = [];\n\nfor (const item of $input.all()) {\n  const t = item.json || {};\n  const start = Number(t.start_time);\n  const end = Number(t.end_time);\n  const hook = String(t.roman_urdu_hook || '').trim();\n  const title = String(t.yt_title || '').trim();\n  \n  // Check finite numbers, start < end, duration between 35s and 360s\n  if (Number.isFinite(start) && Number.isFinite(end) && end > start) {\n    const dur = end - start;\n    if (dur >= 35 && dur <= 360 && hook.length > 5 && title.length > 5) {\n      validItems.push({\n        json: {\n          ...t,\n          video_id: t.video_id || '',\n          video_url: t.video_url || '',\n          lecture_title: t.lecture_title || '',\n          start_time: start,\n          end_time: end,\n          duration_sec: parseFloat(dur.toFixed(1)),\n          roman_urdu_hook: hook,\n          yt_title: title\n        }\n      });\n    }\n  }\n}\n\nif (validItems.length === 0) {\n  throw new Error(\"No valid topics passed validation criteria!\");\n}\n\nreturn validItems;"
       },
-      "id": "0217f152-b14c-4010-b8a2-4b6f4b46fafd",
+      "id": "03103192-58d9-4f7a-b993-e9d9331b293c",
       "name": "🛡️ Validate Clip Boundaries & Metadata",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1264,
-        992
+        496,
+        448
       ]
     },
     {
@@ -433,13 +445,17 @@
         "operation": "append",
         "documentId": {
           "__rl": true,
-          "value": "1R1q-WQHHwyfVkcgWbDdBXhGt89SI2O0O4-XImxuCbE8",
-          "mode": "id"
+          "value": "1noDquIR2BkZEN3DFoA4Ey8FU5GZ9c_WBDwvtUkVjoEE",
+          "mode": "list",
+          "cachedResultName": "Al_Haqq_Clips_Queue",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1noDquIR2BkZEN3DFoA4Ey8FU5GZ9c_WBDwvtUkVjoEE/edit?usp=drivesdk"
         },
         "sheetName": {
           "__rl": true,
-          "value": "Google_Sheet_Clips_Queue_Template",
-          "mode": "name"
+          "value": 1354640108,
+          "mode": "list",
+          "cachedResultName": "Al_Haqq_Clips_Queue",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1noDquIR2BkZEN3DFoA4Ey8FU5GZ9c_WBDwvtUkVjoEE/edit#gid=1354640108"
         },
         "columns": {
           "mappingMode": "defineBelow",
@@ -464,17 +480,212 @@
             "YT_Description": "={{ $json.yt_description }}",
             "Tags": "={{ Array.isArray($json.tags) ? $json.tags.join(',') : ($json.tags || '') }}",
             "Status": "pending"
-          }
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Date",
+              "displayName": "Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Clip_ID",
+              "displayName": "Clip_ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Video_ID",
+              "displayName": "Video_ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Video_URL",
+              "displayName": "Video_URL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Lecture_Title",
+              "displayName": "Lecture_Title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Category",
+              "displayName": "Category",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Start_Sec",
+              "displayName": "Start_Sec",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "End_Sec",
+              "displayName": "End_Sec",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Duration_Sec",
+              "displayName": "Duration_Sec",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "First_Words",
+              "displayName": "First_Words",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Last_Words",
+              "displayName": "Last_Words",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Roman_Urdu_Hook",
+              "displayName": "Roman_Urdu_Hook",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Arabic_Sub",
+              "displayName": "Arabic_Sub",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Arabic_Source",
+              "displayName": "Arabic_Source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Reference",
+              "displayName": "Reference",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "English_Sub",
+              "displayName": "English_Sub",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "YT_Title",
+              "displayName": "YT_Title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "YT_Description",
+              "displayName": "YT_Description",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Tags",
+              "displayName": "Tags",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "YT_URL",
+              "displayName": "YT_URL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
         },
         "options": {}
       },
-      "id": "fe9d6163-231e-4518-b8dd-1dbbd2ca7cdf",
+      "id": "a0ae4a68-89a3-472a-96cc-4899c695f6eb",
       "name": "📥 Append Topics to Google Sheet",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
       "position": [
-        1488,
-        992
+        720,
+        448
       ],
       "credentials": {
         "googleSheetsOAuth2Api": {
@@ -488,57 +699,132 @@
         "operation": "update",
         "documentId": {
           "__rl": true,
-          "value": "1R1q-WQHHwyfVkcgWbDdBXhGt89SI2O0O4-XImxuCbE8",
-          "mode": "id"
+          "value": "1dZw3LWuXrhyqtXSHMqWzot-Jzk4JqjjRuSDodzXBGyc",
+          "mode": "list",
+          "cachedResultName": "Al_Haqq_Video_Sources_Queue",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1dZw3LWuXrhyqtXSHMqWzot-Jzk4JqjjRuSDodzXBGyc/edit?usp=drivesdk"
         },
         "sheetName": {
           "__rl": true,
-          "value": "Google_Sheet_Video_Sources_Queue_Template",
-          "mode": "name"
+          "value": 1157530755,
+          "mode": "list",
+          "cachedResultName": "Al_Haqq_Video_Sources_Queue",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1dZw3LWuXrhyqtXSHMqWzot-Jzk4JqjjRuSDodzXBGyc/edit#gid=1157530755"
         },
         "columns": {
           "mappingMode": "defineBelow",
           "value": {
             "Status": "processed",
-            "Processed_Date": "={{ $now.setZone('Asia/Kolkata').toFormat('yyyy-MM-dd HH:mm') }}"
+            "Processed_Date": "={{ $now.setZone('Asia/Kolkata').toFormat('yyyy-MM-dd HH:mm') }}",
+            "Video_ID": "={{ $('🎯 Select 1 Video to Process').first().json.video_id }}"
           },
           "matchingColumns": [
             "Video_ID"
-          ]
+          ],
+          "schema": [
+            {
+              "id": "Date",
+              "displayName": "Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Video_ID",
+              "displayName": "Video_ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Video_URL",
+              "displayName": "Video_URL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Added_By",
+              "displayName": "Added_By",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Processed_Date",
+              "displayName": "Processed_Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
         },
         "options": {}
       },
-      "id": "fb11dfba-8c1d-4ab4-97b0-4dede743f7eb",
+      "id": "a382bc39-ebbd-486c-a971-6b7c56e6661d",
       "name": "✅ Mark Source Video as Processed",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
       "position": [
-        1712,
-        992
+        944,
+        448
       ],
       "credentials": {
         "googleSheetsOAuth2Api": {
           "id": "ew6mItBZu7P6dspU",
           "name": "Google Sheets account 100 account"
         }
-      }
+      },
+      "executeOnce": true
     },
     {
       "parameters": {
         "chatId": "1306188611",
-        "text": "=✅ <b>Al Haqq: Stage 1 Topics Extracted!</b>\n\n🎯 <b>Total Clips Saved:</b> {{ $input.all().length }} clips\n📹 <b>Source Video:</b> <code>{{ $('🎯 Select 1 Video to Process').item.json.video_id }}</code>\n📌 <b>Status:</b> All clips set to 'pending' for Stage 2.\n📊 <b>Remaining in Queue:</b> {{ Math.max(0, $('🎯 Select 1 Video to Process').item.json.total_pending - 1) }} videos left\n⏰ {{ $now.setZone(\"Asia/Kolkata\").toFormat(\"HH:mm\") }} IST",
+        "text": "=✅ <b>Al Haqq: Stage 1 Topics Extracted!</b>\n\n🎯 <b>Total Clips Saved:</b> {{ $('🛡️ Validate Clip Boundaries & Metadata').all().length }} clips\n📹 <b>Source Video:</b> <code>{{ $('🎯 Select 1 Video to Process').item.json.video_id }}</code>\n📌 <b>Status:</b> All clips set to 'pending' for Stage 2.\n📊 <b>Remaining in Queue:</b> {{ Math.max(0, $('🎯 Select 1 Video to Process').item.json.total_pending - 1) }} videos left\n⏰ {{ $now.setZone(\"Asia/Kolkata\").toFormat(\"HH:mm\") }} IST",
         "additionalFields": {
           "appendAttribution": false,
           "parse_mode": "HTML"
         }
       },
-      "id": "5db16944-f99e-4f6b-a829-68564940ddee",
+      "id": "e664a0e9-a154-4710-8c81-5d028418fee7",
       "name": "📨 Telegram - Stage 1 Success Alert",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        1936,
-        992
+        1168,
+        448
       ],
       "executeOnce": true,
       "webhookId": "f341c370-3618-4ec8-8c37-306d130fdc04",

@@ -22,7 +22,7 @@ class TranscriptionEngine:
         self._key_cooldown: Dict[str, float] = {}
 
     def _call_groq_whisper(self, api_key: str, audio_path: Path):
-        client = Groq(api_key=api_key)
+        client = Groq(api_key=api_key, timeout=120.0)
         with open(audio_path, "rb") as f:
             return client.audio.transcriptions.create(
                 file=(audio_path.name, f),
@@ -33,7 +33,7 @@ class TranscriptionEngine:
 
     def transcribe(self, audio_path: Path, cache_path: Path = None) -> Dict[str, Any]:
         """
-        Transcribes speech using Groq Whisper Large-v3 with cooldown failover.
+        Transcribes speech using Groq Whisper Large-v3 with cooldown failover and retry backoff.
         Returns full text and word/phrase segments with timestamps.
         """
         if cache_path and cache_path.exists():
@@ -66,20 +66,26 @@ class TranscriptionEngine:
         res = None
         last_err = None
         for key_label, key_val in keys_to_try:
-            try:
-                logger.info(f"Attempting Whisper transcription with {key_label} key...")
-                res = self._call_groq_whisper(key_val, audio_path)
-                logger.info(f"Whisper transcription succeeded with {key_label} key!")
+            # Try up to 2 attempts per key with backoff for rate limits
+            for attempt in range(2):
+                try:
+                    logger.info(f"Attempting Whisper transcription with {key_label} key (attempt {attempt+1})...")
+                    res = self._call_groq_whisper(key_val, audio_path)
+                    logger.info(f"Whisper transcription succeeded with {key_label} key!")
+                    break
+                except Exception as e:
+                    last_err = e
+                    err_str = str(e).lower()
+                    if "rate_limit" in err_str or "429" in err_str or "quota" in err_str:
+                        backoff = 15.0 * (attempt + 1)
+                        logger.warning(f"Groq {key_label} key rate-limited. Waiting {backoff:.0f}s backoff before retry...")
+                        time.sleep(backoff)
+                        self._key_cooldown[key_val] = time.time() + 60.0
+                    else:
+                        logger.warning(f"Groq {key_label} key failed: {e}")
+                        break
+            if res is not None:
                 break
-            except Exception as e:
-                last_err = e
-                # Set 60s cooldown on rate-limit / quota errors
-                err_str = str(e).lower()
-                if "rate_limit" in err_str or "429" in err_str or "quota" in err_str:
-                    logger.warning(f"Groq {key_label} key rate-limited. Setting 60s cooldown.")
-                    self._key_cooldown[key_val] = time.time() + 60.0
-                else:
-                    logger.warning(f"Groq {key_label} key failed: {e}")
 
         if res is None:
             raise RuntimeError(f"All Groq Whisper keys failed: {last_err}") from last_err

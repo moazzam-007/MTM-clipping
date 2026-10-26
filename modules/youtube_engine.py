@@ -49,115 +49,92 @@ class YouTubeEngine:
                 Path("/app/cookies.txt")
             ] if p.exists() and p.stat().st_size > 50), None)
 
-        cookie_args = ["--cookies", str(cookie_file)] if cookie_file else ["--extractor-args", "youtube:player_client=android"]
+        cookie_args = ["--cookies", str(cookie_file)] if cookie_file else ["--extractor-args", "youtube:player_client=android,ios,mweb"]
         logger.info(f"Using cookies: {cookie_file is not None} for stream resolution")
 
-        # 1. Fetch metadata with --no-playlist
-        meta_cmd = [
+        # Preferred format: 720p H.264 (avc1) + AAC (m4a) to avoid heavy AV1 CPU decoding on Render 0.1 CPU
+        fmt = "bestvideo[height<=720][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best[height<=720]/best"
+
+        cmd = [
             "yt-dlp",
             "--ignore-config",
             "--js-runtimes", "node",
             "--no-playlist",
             *cookie_args,
-            "--dump-json",
+            "-f", fmt,
+            "--dump-single-json",
             "--",
             clean_url
         ]
+
+        logger.info("Executing unified yt-dlp metadata and stream resolution...")
         try:
-            res = subprocess.run(meta_cmd, capture_output=True, text=True, timeout=60, check=True)
-            meta = json.loads(res.stdout)
-        except Exception as e:
-            logger.warning(f"Full JSON dump failed ({e}), falling back to basic metadata...")
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
+        except subprocess.TimeoutExpired:
+            logger.error("yt-dlp command timed out after 90s")
+            raise RuntimeError("yt-dlp stream resolution timed out after 90 seconds")
+
+        meta = None
+        if res.returncode == 0 and res.stdout.strip():
             try:
-                basic_cmd = [
-                    "yt-dlp",
-                    "--ignore-config",
-                    "--js-runtimes", "node",
-                    "--no-playlist",
-                    "--max-downloads", "1",
-                    *cookie_args,
-                    "--print", "%(id)s||%(title)s||%(duration)s",
-                    "--",
-                    clean_url
-                ]
-                basic_res = subprocess.run(basic_cmd, capture_output=True, text=True, timeout=40, check=True)
-                lines = [l for l in basic_res.stdout.strip().splitlines() if l.strip()]
-                last_line = lines[-1] if lines else ""
-                parts = last_line.split("||")
-                dur = 3600.0
-                if len(parts) >= 3:
-                    v_id = parts[0]
-                    v_title = "||".join(parts[1:-1])
-                    try:
-                        dur = float(parts[-1])
-                    except (ValueError, TypeError):
-                        dur = 3600.0
-                elif len(parts) == 2:
-                    v_id = parts[0]
-                    v_title = parts[1]
-                else:
-                    v_id = parts[0] if parts else "unknown"
-                    v_title = "Mufti Tariq Masood Bayan"
+                meta = json.loads(res.stdout)
+            except Exception as parse_err:
+                logger.warning(f"Failed to parse yt-dlp JSON: {parse_err}")
 
-                meta = {
-                    "id": v_id,
-                    "title": v_title if v_title else "Mufti Tariq Masood Bayan",
-                    "duration": dur
-                }
-            except Exception as basic_err:
-                logger.warning(f"Basic metadata probe failed ({basic_err}), falling back to video ID from URL")
-                from modules.safe_url import extract_video_id
-                v_id = extract_video_id(clean_url)
-                meta = {
-                    "id": v_id,
-                    "title": "Mufti Tariq Masood Bayan",
-                    "duration": 3600.0
-                }
-
-        # 2. Fetch direct stream URL (prioritize 720p adaptive stream, fallback 22, then 18)
-        stream_cmd = [
-            "yt-dlp",
-            "--ignore-config",
-            "--js-runtimes", "node",
-            "--no-playlist",
-            *cookie_args,
-            "-f", "bestvideo[height<=720]+bestaudio/best[height<=720]/22/18/best",
-            "-g",
-            "--",
-            clean_url
-        ]
-        try:
-            stream_res = subprocess.run(stream_cmd, capture_output=True, text=True, timeout=60, check=True)
-            lines = [line.strip() for line in stream_res.stdout.strip().splitlines() if line.strip().startswith("http")]
-            video_stream = lines[0] if lines else ""
-            audio_stream = lines[1] if len(lines) > 1 else ""
-        except Exception as stream_err:
-            logger.warning(f"720p stream resolution failed ({stream_err}), trying fallback audio/video stream...")
+        # Fallback format if primary 720p adaptive fails (e.g. video only has pre-muxed 360p or direct stream)
+        if not meta or not meta.get("url") and not meta.get("requested_formats"):
+            logger.warning(f"Primary format resolution failed (code {res.returncode}): {res.stderr[-400:] if res.stderr else 'no output'}. Retrying with combined fallback...")
             fallback_cmd = [
                 "yt-dlp",
                 "--ignore-config",
                 "--js-runtimes", "node",
                 "--no-playlist",
-                *cookie_args,
-                "-f", "ba/b",
-                "-g",
+                "--extractor-args", "youtube:player_client=android,ios,mweb",
+                "-f", "best[height<=720]/b/ba[ext=m4a]/ba",
+                "--dump-single-json",
                 "--",
                 clean_url
             ]
-            fb_res = subprocess.run(fallback_cmd, capture_output=True, text=True, timeout=60, check=True)
-            lines = [line.strip() for line in fb_res.stdout.strip().splitlines() if line.strip().startswith("http")]
-            video_stream = lines[0] if lines else ""
-            audio_stream = lines[0] if lines else ""
+            try:
+                fb_res = subprocess.run(fallback_cmd, capture_output=True, text=True, timeout=90)
+                if fb_res.returncode == 0 and fb_res.stdout.strip():
+                    meta = json.loads(fb_res.stdout)
+                else:
+                    err_msg = fb_res.stderr[-600:] if fb_res.stderr else f"Exit code {fb_res.returncode}"
+                    logger.error(f"Fallback yt-dlp resolution also failed: {err_msg}")
+                    raise RuntimeError(f"yt-dlp extraction failed: {err_msg}")
+            except subprocess.TimeoutExpired:
+                raise RuntimeError("yt-dlp fallback resolution timed out after 90s")
 
+        # Extract direct stream URLs from requested_formats (dual stream) or single format
+        video_stream = ""
+        audio_stream = ""
+        req_formats = meta.get("requested_formats")
+        if req_formats and isinstance(req_formats, list) and len(req_formats) >= 2:
+            video_stream = req_formats[0].get("url", "")
+            audio_stream = req_formats[1].get("url", "")
+        elif req_formats and isinstance(req_formats, list) and len(req_formats) == 1:
+            video_stream = req_formats[0].get("url", "")
+            audio_stream = ""
+        else:
+            video_stream = meta.get("url", "")
+            audio_stream = ""
+
+        # Validate video duration and metadata
         raw_dur = meta.get("duration")
         try:
             dur_val = float(raw_dur) if raw_dur is not None else 0.0
         except (ValueError, TypeError):
             dur_val = 0.0
 
+        v_id = meta.get("id") or "unknown"
+        v_title = meta.get("title") or "YouTube Video"
+
+        logger.info(f"Resolved video: '{v_title}' ({dur_val}s) - Has video: {bool(video_stream)}, Has separate audio: {bool(audio_stream)}")
+
         return {
-            "video_id": meta.get("id"),
-            "title": meta.get("title"),
+            "video_id": v_id,
+            "title": v_title,
             "duration": dur_val,
             "stream_url": video_stream,
             "audio_stream_url": audio_stream
@@ -231,10 +208,14 @@ class YouTubeEngine:
                 "-vn", "-ac", "1", "-ar", "16000", "-b:a", "32k",
                 str(chunk_file)
             ]
-            res = subprocess.run(ff_cmd, capture_output=True, text=True, timeout=180)
-            if res.returncode != 0:
-                logger.error(f"FFmpeg chunk extraction failed for chunk {chunk_index}: {res.stderr[-300:]}")
-                raise RuntimeError(f"FFmpeg audio chunk extraction failed: {res.stderr[-150:]}")
+            try:
+                res = subprocess.run(ff_cmd, capture_output=True, text=True, timeout=300)
+                if res.returncode != 0:
+                    logger.error(f"FFmpeg chunk extraction failed for chunk {chunk_index}: {res.stderr[-300:]}")
+                    raise RuntimeError(f"FFmpeg audio chunk extraction failed: {res.stderr[-150:]}")
+            except subprocess.TimeoutExpired:
+                logger.error(f"FFmpeg chunk extraction timed out for chunk {chunk_index}")
+                raise RuntimeError(f"FFmpeg audio chunk {chunk_index} timed out after 300 seconds")
                 
             chunks.append({
                 "index": chunk_index,
@@ -300,12 +281,16 @@ class YouTubeEngine:
                 str(output_path)
             ]
 
-        # Dynamic timeout scaled to duration (at least 240s, or 6x duration on 0.1 CPU)
-        cut_timeout = max(240, int(duration_sec * 6))
-        res = subprocess.run(ff_cmd, capture_output=True, text=True, timeout=cut_timeout)
-        if res.returncode != 0:
-            logger.error(f"FFmpeg video cutting failed: {res.stderr[-400:]}")
-            raise RuntimeError(f"FFmpeg video cutting failed: {res.stderr[-200:]}")
+        # Dynamic timeout scaled to duration (at least 300s, or 8x duration on 0.1 CPU)
+        cut_timeout = max(300, int(duration_sec * 8))
+        try:
+            res = subprocess.run(ff_cmd, capture_output=True, text=True, timeout=cut_timeout)
+            if res.returncode != 0:
+                logger.error(f"FFmpeg video cutting failed: {res.stderr[-400:]}")
+                raise RuntimeError(f"FFmpeg video cutting failed: {res.stderr[-200:]}")
+        except subprocess.TimeoutExpired:
+            logger.error(f"FFmpeg video cutting timed out after {cut_timeout}s")
+            raise RuntimeError(f"FFmpeg video cutting timed out after {cut_timeout} seconds")
 
         logger.info(f"HD clip saved successfully ({output_path.stat().st_size / (1024*1024):.2f} MB)")
         return output_path

@@ -1,7 +1,7 @@
 services:
   - type: web
     name: al-haqq-shorts-engine
-    env: docker
+    runtime: docker
     region: frankfurt
     plan: free
     dockerfilePath: Dockerfile
@@ -15,7 +15,10 @@ services:
         sync: false
       - key: GROQ_API_KEY_FALLBACK
         sync: false
+      - key: YOUTUBE_COOKIES_BASE64
+        sync: false
       - key: API_SECRET_KEY
         generateValue: true
       - key: PORT
-        value: 10000
+        value: "10000"
+

@@ -94,7 +94,8 @@ class VideoEngine:
         hook_text: str,
         arabic_text: str,
         english_text: str,
-        output_mp4_path: Path
+        output_mp4_path: Path,
+        expected_duration: float = None
     ) -> Path:
         """
         Full composition pipeline with guaranteed cleanup and memory-safe FFmpeg encoding.
@@ -129,7 +130,8 @@ class VideoEngine:
             src_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 720)
             fps_val = cap.get(cv2.CAP_PROP_FPS) or 25.0
             frame_cnt = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0
-            clip_dur = (float(frame_cnt) / float(fps_val)) if (frame_cnt > 0 and fps_val > 0) else 60.0
+            default_fallback_dur = float(expected_duration) if expected_duration and expected_duration > 0 else 60.0
+            clip_dur = (float(frame_cnt) / float(fps_val)) if (frame_cnt > 0 and fps_val > 0) else default_fallback_dur
             cap.release()
 
             square_dim = min(src_w, src_h)
@@ -171,11 +173,15 @@ class VideoEngine:
                 str(output_mp4_path)
             ]
 
-            render_timeout = max(300, int(clip_dur * 6))
-            res = subprocess.run(ff_cmd, capture_output=True, text=True, timeout=render_timeout)
-            if res.returncode != 0:
-                logger.error(f"FFmpeg composite failed: {res.stderr[-400:]}")
-                raise RuntimeError(f"FFmpeg composite failed: {res.stderr[-200:]}")
+            render_timeout = max(300, int(clip_dur * 8))
+            try:
+                res = subprocess.run(ff_cmd, capture_output=True, text=True, timeout=render_timeout)
+                if res.returncode != 0:
+                    logger.error(f"FFmpeg composite failed: {res.stderr[-400:]}")
+                    raise RuntimeError(f"FFmpeg composite failed: {res.stderr[-200:]}")
+            except subprocess.TimeoutExpired:
+                logger.error(f"FFmpeg composite timed out after {render_timeout}s")
+                raise RuntimeError(f"FFmpeg composite timed out after {render_timeout} seconds")
 
             logger.info(f"Final video rendered successfully: {output_mp4_path} ({output_mp4_path.stat().st_size / (1024*1024):.2f} MB)")
             return output_mp4_path

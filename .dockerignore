@@ -1,6 +1,10 @@
 .git
 .gitignore
 .env
+.env.*
+cookies.txt
+*.txt
+*.csv
 __pycache__
 *.pyc
 *.pyo
@@ -13,9 +17,12 @@ jobs/
 *.mp3
 *.m4a
 *.part
+*.zip
+test_*.py
 transcript_cache.json
 lecture_sample_audio.mp3
 mtm_clip_frame.jpg
 final_short_frame.jpg
 test_layout_preview.jpg
 rendered_template_bg.png
+

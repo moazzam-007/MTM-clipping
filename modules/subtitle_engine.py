@@ -64,14 +64,14 @@ class SubtitleEngine:
         box_w = min(620, video_width - 40)
         max_text_w = box_w - 40
 
-        # Load fonts
+        # Load fonts with mobile-friendly sizes (24px English, 28px Arabic)
         try:
-            font_ar = ImageFont.truetype(self.font_arabic_path, 24) if self.font_arabic_path else ImageFont.load_default()
+            font_ar = ImageFont.truetype(self.font_arabic_path, 28) if self.font_arabic_path else ImageFont.load_default()
         except Exception:
             font_ar = ImageFont.load_default()
 
         try:
-            font_en = ImageFont.truetype(self.font_hook_path, 19) if self.font_hook_path else ImageFont.load_default()
+            font_en = ImageFont.truetype(self.font_hook_path, 24) if self.font_hook_path else ImageFont.load_default()
         except Exception:
             font_en = ImageFont.load_default()
 
@@ -100,26 +100,21 @@ class SubtitleEngine:
                     en_lines[-1] = en_lines[-1].rsplit(" ", 1)[0] if " " in en_lines[-1] else en_lines[-1][:-4]
                 en_lines[-1] = en_lines[-1] + "..."
 
-        # 2. Prepare Arabic text
+        # 2. Prepare Arabic text - dynamic font scaling instead of truncation (preserves full Quranic Ayat)
         rendered_ar_text = ""
         ar_layout_kwargs = {}
         if has_ar:
             raw_ar = arabic_text.strip()
-            # If line is extremely long, fit dynamically by character boundary
-            if len(raw_ar) > 65:
-                words = raw_ar.split()
-                truncated = []
-                c_len = 0
-                for w in words:
-                    if c_len + len(w) + 1 > 60:
-                        break
-                    truncated.append(w)
-                    c_len += len(w) + 1
-                raw_ar = (" ".join(truncated) + "…") if truncated else (raw_ar[:60] + "…")
+            ar_size = 28 if len(raw_ar) <= 45 else (24 if len(raw_ar) <= 70 else 20)
+            if self.font_arabic_path:
+                try:
+                    font_ar = ImageFont.truetype(self.font_arabic_path, ar_size)
+                except Exception:
+                    pass
 
             if HAS_RAQM and self.font_arabic_path:
                 try:
-                    font_ar_raqm = ImageFont.truetype(self.font_arabic_path, 24, layout_engine=ImageFont.Layout.RAQM)
+                    font_ar_raqm = ImageFont.truetype(self.font_arabic_path, ar_size, layout_engine=ImageFont.Layout.RAQM)
                     font_ar = font_ar_raqm
                     rendered_ar_text = raw_ar
                     ar_layout_kwargs = {"direction": "rtl", "language": "ar"}
@@ -131,8 +126,8 @@ class SubtitleEngine:
                 rendered_ar_text = get_display(reshaped, base_dir='R')
 
         # 3. Compute dynamic box height
-        line_h_en = 24
-        ar_h = 36 if has_ar else 0
+        line_h_en = 28
+        ar_h = 40 if has_ar else 0
         en_total_h = len(en_lines) * line_h_en
         padding_v = 18
 

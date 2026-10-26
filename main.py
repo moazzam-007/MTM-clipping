@@ -5,9 +5,7 @@ Features dedicated endpoints for Stage 1 (Topic Extraction) and Stage 2 (Single 
 with strict concurrency controls, path traversal prevention, and memory safety for Render free tier.
 """
 
-import os
 import time
-import json
 import uuid
 import shutil
 import secrets
@@ -15,7 +13,8 @@ import logging
 import asyncio
 from pathlib import Path
 from typing import Optional, List, Dict, Any
-from fastapi import FastAPI, BackgroundTasks, HTTPException, Header, Depends
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
 import config
@@ -27,22 +26,20 @@ from modules.video_engine import VideoEngine
 
 logger = logging.getLogger("al-haqq-engine.api")
 
-# In production, disable swagger/openapi docs to prevent reconnaissance
-app = FastAPI(
-    title="Al Haqq Video Repurposing Engine",
-    description="Automated YouTube Lecture to Shorts & Mini-Long Video Generator",
-    version="2.0.0",
-    docs_url=None,
-    redoc_url=None,
-    openapi_url=None
-)
+# Strong reference set to prevent asyncio background tasks from being garbage collected mid-execution
+BG_TASKS: set = set()
 
-# Concurrency Gate: Strictly 1 heavy job at a time to stay under 512MB RAM cap
-RENDER_SEMAPHORE = asyncio.Semaphore(1)
+# In-memory store for async jobs
+JOBS_STORE: Dict[str, Dict[str, Any]] = {}
 
 def sweep_expired_jobs(max_age_seconds: int = 1800):
-    """Purges any temporary job folders older than max_age_seconds (default 30m)."""
+    """Purges any temporary job folders and store entries older than max_age_seconds (default 30m)."""
     now = time.time()
+    # Clean in-memory job store
+    expired_ids = [jid for jid, jinfo in JOBS_STORE.items() if (now - jinfo.get("created_at", 0)) > max_age_seconds]
+    for jid in expired_ids:
+        JOBS_STORE.pop(jid, None)
+
     if not config.JOBS_DIR.exists():
         return
     for item in config.JOBS_DIR.iterdir():
@@ -55,9 +52,28 @@ def sweep_expired_jobs(max_age_seconds: int = 1800):
             except Exception as e:
                 logger.warning(f"Failed to sweep {item}: {e}")
 
-@app.on_event("startup")
-def on_startup():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: sweep stale temporary jobs from previous crashes/restarts
     sweep_expired_jobs(max_age_seconds=1800)
+    yield
+    # Shutdown: cancel any active tasks cleanly
+    for t in list(BG_TASKS):
+        t.cancel()
+
+# In production, disable swagger/openapi docs to prevent reconnaissance
+app = FastAPI(
+    title="Al Haqq Video Repurposing Engine",
+    description="Automated YouTube Lecture to Shorts & Mini-Long Video Generator",
+    version="2.0.0",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+    lifespan=lifespan
+)
+
+# Concurrency Gate: Strictly 1 heavy job at a time to stay under 512MB RAM cap
+RENDER_SEMAPHORE = asyncio.Semaphore(1)
 
 # ── Pydantic Request Models ─────────────────────────────────────────────────
 class ExtractTopicsRequest(BaseModel):
@@ -202,7 +218,8 @@ def _execute_render_job(req: RenderClipRequest, clip_id: str, clip_dir: Path, fi
         hook_text=req.hook_text,
         arabic_text=req.arabic_sub or "",
         english_text=req.english_sub or "",
-        output_mp4_path=final_mp4_path
+        output_mp4_path=final_mp4_path,
+        expected_duration=duration
     )
 
     return {
@@ -258,9 +275,7 @@ async def render_single_clip(req: RenderClipRequest, auth: bool = Depends(verify
             if raw_clip_path.exists():
                 raw_clip_path.unlink()
 
-# ── MILAN VOIMA ASYNC POLLING ARCHITECTURE (50s Poll + Sleep Prevention) ────
-JOBS_STORE: Dict[str, Dict[str, Any]] = {}
-
+# ── ASYNC POLLING ARCHITECTURE (50s Poll + Sleep Prevention) ────────────────
 async def _run_async_render_worker(req: RenderClipRequest, clip_id: str):
     clean_category = "".join(c for c in (req.category or "shorts") if c.isalnum() or c in "-_") or "shorts"
     clip_dir = config.JOBS_DIR / clip_id
@@ -296,10 +311,12 @@ async def _run_async_render_worker(req: RenderClipRequest, clip_id: str):
 @app.post("/api/render-clip-async")
 async def render_clip_async(req: RenderClipRequest, auth: bool = Depends(verify_api_key)):
     """
-    Milan Voima asynchronous job dispatch.
+    Asynchronous job dispatch.
     Immediately returns job_id so n8n can poll /api/job-status/{clip_id} every 50 seconds.
     Prevents HTTP proxy timeouts and resets Render 15-minute idle sleep timer on every poll ping.
     """
+    sweep_expired_jobs(max_age_seconds=1800)
+
     duration = req.end_time - req.start_time
     if duration <= 0 or duration > config.MINI_LONG_MAX_DURATION:
         raise HTTPException(status_code=400, detail=f"Invalid duration: {duration:.1f}s")
@@ -315,8 +332,10 @@ async def render_clip_async(req: RenderClipRequest, auth: bool = Depends(verify_
         "error": None
     }
 
-    # Launch worker in background task
-    asyncio.create_task(_run_async_render_worker(req, clip_id))
+    # Launch worker in background task with strong reference tracking to prevent GC
+    task = asyncio.create_task(_run_async_render_worker(req, clip_id))
+    BG_TASKS.add(task)
+    task.add_done_callback(BG_TASKS.discard)
 
     return {
         "status": "queued",
@@ -367,11 +386,13 @@ def download_clip(
 @app.delete("/api/jobs/{clip_id}")
 def delete_job(clip_id: str, auth: bool = Depends(verify_api_key)):
     """Explicitly deletes job directory and cleans store once upload is complete."""
-    safe_clip_id = Path(clip_id).name
+    safe_clip_id = Path(clip_id).name.strip()
+    if not safe_clip_id or safe_clip_id in (".", "..") or not safe_clip_id.startswith(("clip_", "extract_", "job_")):
+        raise HTTPException(status_code=400, detail="Invalid job ID")
+
+    base_jobs = config.JOBS_DIR.resolve()
     clip_dir = (config.JOBS_DIR / safe_clip_id).resolve()
-    try:
-        clip_dir.relative_to(config.JOBS_DIR.resolve())
-    except ValueError:
+    if clip_dir == base_jobs or clip_dir.parent != base_jobs:
         raise HTTPException(status_code=403, detail="Access denied")
 
     if clip_dir.exists():
