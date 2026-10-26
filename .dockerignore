@@ -3,7 +3,7 @@
 .env
 .env.*
 cookies.txt
-*.txt
+review.txt
 *.csv
 __pycache__
 *.pyc
